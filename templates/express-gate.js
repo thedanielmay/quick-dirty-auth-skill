@@ -16,7 +16,13 @@ const page = (error = '') =>
 
 module.exports = function qdaGate(req, res, next) {
   if (!PASSWORD) return next();
-  const cookies = Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')));
+  const cookies = Object.fromEntries(
+    (req.headers.cookie || '').split(';').map((c) => {
+      const s = c.trim();
+      const idx = s.indexOf('=');
+      return idx === -1 ? [s, ''] : [s.slice(0, idx), s.slice(idx + 1)];
+    }),
+  );
   if (cookies[COOKIE] === PASSWORD) return next();
 
   if (req.method === 'POST') {
@@ -25,7 +31,7 @@ module.exports = function qdaGate(req, res, next) {
     req.on('end', () => {
       const params = new URLSearchParams(body);
       if (params.get('password') === PASSWORD) {
-        res.setHeader('set-cookie', `${COOKIE}=${PASSWORD}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800`);
+        res.setHeader('set-cookie', `${COOKIE}=${PASSWORD}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800`);
         res.statusCode = 303; res.setHeader('location', req.url); return res.end();
       }
       res.statusCode = 401; res.setHeader('content-type', 'text/html'); res.end(page('Wrong password'));
