@@ -31,7 +31,12 @@ Run them from the **skill directory**, passing the target project path. They are
    - **cloudflare route:** no app files. (DNS + Access happen after deploy, in step 5, once the Vercel target exists.)
 5. **Deploy.**
    - Run `vercel --prod` (or `vercel` for a preview if the user asked). Capture the deployment URL.
-   - **password route:** set the env var with `vercel env add GATE_PASSWORD production` (pipe the generated password), then redeploy so it takes effect. Record URL + credential in `.qda.json`.
+   - **password route (no public-unprotected window):**
+     1. Deploy a **preview** first: `vercel` (no `--prod`). Preview URLs are unguessable; treat them as private and do not share yet. This creates/links the Vercel project.
+     2. Set the gate secret for both environments: `vercel env add GATE_PASSWORD preview` and `vercel env add GATE_PASSWORD production` (pipe in the generated password each time).
+     3. Redeploy the preview (`vercel`) and verify the gate is active (a request without the cookie returns 401). Only proceed once the gate works.
+     4. Promote to production: `vercel --prod`. Because `GATE_PASSWORD` is already set in production, the production URL is gated from its first response — no open window.
+     5. Record the production URL + credential in `.qda.json`.
    - **cloudflare route:** add the custom hostname (`vercel domains add` / alias to the deployment), then via `cloudflare.mjs`: `findAccountId()`, `upsertProxiedCname(zone, host, 'cname.vercel-dns.com')`, `createAccessApp`, `createAccessPolicy([userEmail])`. Record each resource (zone id, record id, app id, policy id) in `.qda.json` as you go.
 6. **Report.** Print the live URL, the route used, and the credential:
    - password route → the URL + the password.
