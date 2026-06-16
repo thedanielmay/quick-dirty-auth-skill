@@ -29,8 +29,7 @@ Run them from the **skill directory**, passing the target project path. They are
 4. **Apply the gate.**
    - **password route:** generate a password (`password.mjs`), copy the gate template (`gate-apply.mjs`). For `node-server`, show the user the mount instruction. Record each written file in `.qda.json` (`manifest.mjs`). You will set `GATE_PASSWORD` as a Vercel env var in step 5.
    - **cloudflare route:** no app files. (DNS + Access happen after deploy, in step 5, once the Vercel target exists.)
-5. **Deploy.**
-   - Run `vercel --prod` (or `vercel` for a preview if the user asked). Capture the deployment URL.
+5. **Deploy.** Use the route-specific sequence below — do NOT deploy to production before the gate is active.
    - **password route (no public-unprotected window):**
      1. Deploy a **preview** first: `vercel` (no `--prod`). Preview URLs are unguessable; treat them as private and do not share yet. This creates/links the Vercel project.
      2. Set the gate secret for both environments: `vercel env add GATE_PASSWORD preview` and `vercel env add GATE_PASSWORD production` (pipe in the generated password each time).
