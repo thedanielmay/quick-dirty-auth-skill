@@ -35,3 +35,31 @@ test('applyGate reads the template and writes it to the target dest', () => {
   assert.match(writes[0].contents, /qda_auth/);
   assert.match(writes[0].contents, /GATE_PASSWORD/);
 });
+
+test('static plan declares an ensureFiles package.json', () => {
+  const p = planGate('static');
+  assert.ok(Array.isArray(p.ensureFiles));
+  assert.equal(p.ensureFiles[0].dest, 'package.json');
+});
+
+test('applyGate(static) writes middleware + package.json when package.json is absent', () => {
+  const writes = [];
+  const mockWriter = (path, contents) => writes.push({ path, contents });
+  const noneExist = () => false;
+  const plan = applyGate('static', '/tmp/static-target', mockWriter, noneExist);
+  const paths = writes.map((w) => w.path);
+  assert.ok(paths.some((p) => /\/middleware\.ts$/.test(p)));
+  assert.ok(paths.some((p) => /\/package\.json$/.test(p)));
+  assert.deepEqual(plan.ensuredWritten, ['package.json']);
+});
+
+test('applyGate(static) does NOT clobber an existing package.json', () => {
+  const writes = [];
+  const mockWriter = (path, contents) => writes.push({ path, contents });
+  const pkgExists = (path) => /package\.json$/.test(path); // pretend package.json already there
+  const plan = applyGate('static', '/tmp/static-target', mockWriter, pkgExists);
+  const paths = writes.map((w) => w.path);
+  assert.ok(paths.some((p) => /\/middleware\.ts$/.test(p)));        // middleware still written
+  assert.ok(!paths.some((p) => /\/package\.json$/.test(p)));         // package.json NOT written
+  assert.deepEqual(plan.ensuredWritten, []);
+});
