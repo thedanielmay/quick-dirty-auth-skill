@@ -36,7 +36,7 @@ Run them from the **skill directory**, passing the target project path. They are
      3. Redeploy the preview (`vercel`) and verify the gate is active (a request without the cookie returns 401). Only proceed once the gate works.
      4. Promote to production: `vercel --prod`. Because `GATE_PASSWORD` is already set in production, the production URL is gated from its first response — no open window.
      5. Record the production URL + credential in `.qda.json`.
-   - **cloudflare route:** add the custom hostname (`vercel domains add` / alias to the deployment), then via `cloudflare.mjs`: `findAccountId()`, `upsertProxiedCname(zone, host, 'cname.vercel-dns.com')`, `createAccessApp`, `createAccessPolicy([userEmail])`. Record each resource (zone id, record id, app id, policy id) in `.qda.json` as you go.
+   - **cloudflare route:** add the custom hostname (`vercel domains add` / alias to the deployment), then via `cloudflare.mjs`, in order: `const accountId = await findAccountId()`; `const recordId = await upsertProxiedCname(zoneId, host, 'cname.vercel-dns.com')` (zoneId from the step-1 `findZone`); `const appId = await createAccessApp(accountId, host)`; `await createAccessPolicy(accountId, appId, [userEmail])`. Record each resource (zone id, record id, app id, policy id) in `.qda.json` as you go.
 6. **Report.** Print the live URL, the route used, and the credential:
    - password route → the URL + the password.
    - cloudflare route → the URL + "Login: email OTP, allowed = <emails>".
