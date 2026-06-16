@@ -1,0 +1,4 @@
+node_modules/
+.qda.json
+*.local
+.DS_Store
