@@ -1,0 +1,14 @@
+{
+  "name": "quick-dirty-auth",
+  "owner": {
+    "name": "Daniel May",
+    "url": "https://github.com/thedanielmay"
+  },
+  "plugins": [
+    {
+      "name": "quick-dirty-auth",
+      "source": "./",
+      "description": "Deploy a local app to the web behind an auth gate: shared password by default, Cloudflare Access when the domain is already on Cloudflare. Hands-off where possible."
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+# Changelog
+
+## 1.0.1 - 2026-11-22
+
+- Added the marketplace files: marketplace.json, LICENSE, CHANGELOG.md and README.md.
+- Added license and metadata.version to the SKILL.md frontmatter.
+- Removed the email address from plugin.json and added the author url.
+- Added .DS_Store, __pycache__/ and *.bak* to .gitignore.
