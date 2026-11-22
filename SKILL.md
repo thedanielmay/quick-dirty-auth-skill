@@ -3,7 +3,7 @@ name: quick-dirty-auth
 description: Use when the user wants to put a local app on the public web behind an auth gate quickly — "deploy this with a password", "put auth on this and ship it", "expose this app but lock it down", "quick dirty auth". Detects the app shape (Next.js, Node server, or static), applies a server-enforced gate (shared password by default; Cloudflare Access when the domain is already on Cloudflare), deploys to Vercel, and reports a live URL. Optimizes for hands-off operation. Also handles teardown.
 license: MIT
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # quick-dirty-auth
