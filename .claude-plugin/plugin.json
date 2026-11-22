@@ -1,6 +1,6 @@
 {
   "name": "quick-dirty-auth",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Deploy a local app to the web behind an auth gate: shared password by default, Cloudflare Access when the domain is already on Cloudflare. Hands-off where possible.",
   "author": {
     "name": "Daniel May",
