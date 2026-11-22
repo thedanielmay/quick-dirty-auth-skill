@@ -4,6 +4,9 @@
     "name": "Daniel May",
     "url": "https://github.com/thedanielmay"
   },
+  "metadata": {
+    "description": "Deploy a local app to the web behind an auth gate: shared password by default, Cloudflare Access when the domain is already on Cloudflare. Hands-off where possible."
+  },
   "plugins": [
     {
       "name": "quick-dirty-auth",
