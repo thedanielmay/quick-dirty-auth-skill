@@ -1,7 +1,7 @@
+// qda-gate: quick-dirty-auth
 // templates/express-gate.js → copied into a Node/Express project; mount before routes:
 //   const gate = require('./qda-gate'); app.use(gate);
 const COOKIE = 'qda_auth';
-const PASSWORD = process.env.GATE_PASSWORD || '';
 const LOCKED_TEXT = 'Locked: the site owner has not finished setting up the sign-in.';
 
 const page = (error = '') =>
@@ -16,6 +16,8 @@ const page = (error = '') =>
   <button>Enter</button></form>`;
 
 module.exports = function qdaGate(req, res, next) {
+  // Read on each request so a password set after load still unlocks the site.
+  const PASSWORD = process.env.GATE_PASSWORD || '';
   if (!PASSWORD.trim()) {
     res.statusCode = 503;
     res.setHeader('x-qda-gate', 'locked');

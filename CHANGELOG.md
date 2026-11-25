@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.0 - 2026-11-26
+
+- The password is never written to `.qda.json`. The manifest records only that a password is set, and removes any password field on read.
+- `.qda.json` is added to the project `.gitignore` and `.vercelignore`, without duplicate lines.
+- An existing gate file is never overwritten silently. With agreement, `--force` saves a backup next to the file. Teardown deletes only files this skill created and restores backups.
+- Fastify apps get a dependency-free gate using an `onRequest` hook, with the same headers as the Express gate.
+- Deploy stops when the server entry does not load and mount the gate before routes.
+- Static signals outrank a stray server file. Conflicting static and server signals report `unknown`.
+- Every gate reads `GATE_PASSWORD` when it handles a request. No health path is exempt.
+- The scripts print results from the command line. Requires Node 22.18 or newer.
+
 ## 1.0.4 - 2026-11-26
 
 - The gate stays locked with a 503 page until `GATE_PASSWORD` is set.

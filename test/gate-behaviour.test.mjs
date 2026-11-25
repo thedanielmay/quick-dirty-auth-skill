@@ -7,8 +7,8 @@ import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
 
-// Each template reads GATE_PASSWORD once at load time. Every case therefore
-// gets a fresh file name so the module is evaluated again with that case's env.
+// Every case gets a fresh file name so the module is evaluated in isolation.
+// The gates read GATE_PASSWORD on each request, not at load time.
 const TMP = await mkdtemp(join(tmpdir(), 'qda-gate-behaviour-'));
 after(() => rm(TMP, { recursive: true, force: true }));
 
@@ -22,6 +22,10 @@ async function loadFresh(templateFile, password, ext, transform = (s) => s) {
   if (password === undefined) delete process.env.GATE_PASSWORD;
   else process.env.GATE_PASSWORD = password;
   return ext === 'cjs' ? require(file) : import(pathToFileURL(file).href);
+}
+
+function setLatePassword(latePassword) {
+  if (latePassword !== undefined) process.env.GATE_PASSWORD = latePassword;
 }
 
 function parseCookies(header) {
@@ -71,8 +75,9 @@ function normalize(r) {
 }
 
 // Static edge middleware: default export, global Response, cookie via headers.get.
-async function runEdge({ password, request }) {
+async function runEdge({ password, request, latePassword }) {
   const mod = await loadFresh('edge-middleware.ts', password, 'ts');
+  setLatePassword(latePassword);
   const req = {
     headers: { get: (name) => (name.toLowerCase() === 'cookie' ? (request.cookie || null) : null) },
   };
@@ -89,8 +94,9 @@ async function runEdge({ password, request }) {
 }
 
 // Next middleware: named export, NextResponse stub, cookies.get and formData.
-async function runNext({ password, request }) {
+async function runNext({ password, request, latePassword }) {
   const mod = await loadFresh('next-middleware.ts', password, 'ts', stripNextServer);
+  setLatePassword(latePassword);
   const cookies = parseCookies(request.cookie);
   const req = {
     method: request.method || 'GET',
@@ -111,8 +117,9 @@ async function runNext({ password, request }) {
 }
 
 // Express gate: CommonJS require, middleware(req, res, next), res.setHeader/end.
-async function runExpress({ password, request }) {
+async function runExpress({ password, request, latePassword }) {
   const gate = await loadFresh('express-gate.js', password, 'cjs');
+  setLatePassword(latePassword);
   return new Promise((resolve) => {
     const headers = {};
     let nextCalled = false;
@@ -143,10 +150,48 @@ async function runExpress({ password, request }) {
   });
 }
 
+// Fastify gate: CommonJS hook (request, reply, done), no Fastify installed.
+async function runFastify({ password, request, latePassword }) {
+  const gate = await loadFresh('fastify-gate.js', password, 'cjs');
+  setLatePassword(latePassword);
+  return new Promise((resolve) => {
+    const headers = {};
+    let doneCalled = false;
+    const reply = {
+      statusCode: 200,
+      code(n) { this.statusCode = n; return this; },
+      header(k, v) { headers[k.toLowerCase()] = v; return this; },
+      send(body) {
+        resolve(normalize({
+          status: this.statusCode,
+          gateHeader: headers['x-qda-gate'] ?? null,
+          body: body ?? '',
+          contentType: headers['content-type'] ?? null,
+          cacheControl: headers['cache-control'] ?? null,
+          contentServed: doneCalled,
+        }));
+        return this;
+      },
+    };
+    const req = new EventEmitter();
+    req.method = request.method || 'GET';
+    req.url = '/';
+    req.headers = { cookie: request.cookie || '' };
+    req.raw = req;
+    const body = request.bodyPassword ? 'password=' + encodeURIComponent(request.bodyPassword) : '';
+    process.nextTick(() => {
+      if (body) req.emit('data', Buffer.from(body));
+      req.emit('end');
+    });
+    gate(req, reply, () => { doneCalled = true; reply.send(); });
+  });
+}
+
 const runners = [
   ['edge (static middleware)', runEdge],
   ['next (middleware)', runNext],
   ['express (gate)', runExpress],
+  ['fastify (onRequest hook)', runFastify],
 ];
 
 for (const [name, run] of runners) {
@@ -213,8 +258,12 @@ for (const [name, run] of runners) {
   });
 }
 
-// The static gate has no POST path, so the sign-in POST cases cover the two server gates.
-for (const [name, run, ok] of [['next (middleware)', runNext, 307], ['express (gate)', runExpress, 303]]) {
+// The static gate has no POST path, so the sign-in POST cases cover the server gates.
+for (const [name, run, ok] of [
+  ['next (middleware)', runNext, 307],
+  ['express (gate)', runExpress, 303],
+  ['fastify (onRequest hook)', runFastify, 303],
+]) {
   test(`${name}: a wrong password on POST shows the form and never serves content`, async () => {
     const r = await run({ password: 's3cret', request: { method: 'POST', bodyPassword: 'wrong' } });
     assert.equal(r.status, 401);
@@ -226,5 +275,24 @@ for (const [name, run, ok] of [['next (middleware)', runNext, 307], ['express (g
     const r = await run({ password: 's3cret', request: { method: 'POST', bodyPassword: 's3cret' } });
     assert.equal(r.status, ok);
     assert.equal(r.contentServed, false);
+  });
+}
+
+// Low 4: the environment is read when the request is handled, not at load time.
+for (const [name, run] of runners) {
+  test(`${name}: a password set after load produces the form, not a lock`, async () => {
+    const r = await run({ password: undefined, latePassword: 'late-secret', request: { method: 'GET' } });
+    assert.equal(r.status, 200);
+    assert.equal(r.gateHeader, 'form');
+    assert.equal(r.contentServed, false);
+  });
+
+  test(`${name}: a cookie matching a late password serves content`, async () => {
+    const r = await run({
+      password: undefined,
+      latePassword: 'late-secret',
+      request: { method: 'GET', cookie: 'qda_auth=late-secret' },
+    });
+    assert.equal(r.contentServed, true, 'content must be served');
   });
 }
