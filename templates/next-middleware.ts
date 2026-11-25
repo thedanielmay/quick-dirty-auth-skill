@@ -14,11 +14,23 @@ const page = (error = '') => new NextResponse(
   <form method=POST><div class=err>${error}</div>
   <input type=password name=password placeholder=Password autofocus required>
   <button>Enter</button></form>`,
-  { status: error ? 401 : 200, headers: { 'content-type': 'text/html; charset=utf-8' } },
+  { status: error ? 401 : 200, headers: { 'content-type': 'text/html; charset=utf-8', 'x-qda-gate': 'form' } },
+);
+
+const locked = () => new NextResponse(
+  'Locked: the site owner has not finished setting up the sign-in.',
+  {
+    status: 503,
+    headers: {
+      'x-qda-gate': 'locked',
+      'cache-control': 'no-store',
+      'content-type': 'text/plain; charset=utf-8',
+    },
+  },
 );
 
 export async function middleware(req: NextRequest) {
-  if (!PASSWORD) return NextResponse.next(); // gate disabled if unset
+  if (!PASSWORD.trim()) return locked(); // no password set yet → hold the site locked until setup is finished
   if (req.cookies.get(COOKIE)?.value === PASSWORD) return NextResponse.next();
 
   if (req.method === 'POST') {

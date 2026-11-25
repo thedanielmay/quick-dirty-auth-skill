@@ -7,12 +7,13 @@ gate template (`templates/*.ts`, `templates/*.js`) or `scripts/gate-apply.mjs`.
 All three only touch `/tmp` and local ports — nothing outward-facing.
 
 Behavioral contract verified by these tests (per gate):
-- **No / wrong cookie** → the password form is served; the protected content is NEVER served.
-- **Correct credential** → a `qda_auth` cookie is established; protected content becomes reachable.
+- **No password set**: every request returns HTTP **503** with `x-qda-gate: locked`. The protected content is never served.
+- **No / wrong cookie**: the password form is served with `x-qda-gate: form`. The protected content is NEVER served.
+- **Correct credential**: a `qda_auth` cookie is established; protected content becomes reachable.
 
-Status-code note: the form is returned with HTTP **200** by the Express and static gates,
-and with **401** by the Next gate. A 200 here is correct — it's the login page, not a leak.
-Always assert on the BODY (form present, app content absent), not the status code alone.
+Status-code note: all three gates return HTTP **200** for the no-cookie form. It is the login page, not a leak.
+Always assert on the BODY (form present, app content absent) and the `x-qda-gate` header, not the status code alone.
+Locked case: start each gate with `GATE_PASSWORD` unset. A request with no cookie must return 503 and `x-qda-gate: locked`.
 
 ---
 

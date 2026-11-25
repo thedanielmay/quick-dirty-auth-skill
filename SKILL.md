@@ -3,7 +3,7 @@ name: quick-dirty-auth
 description: Use when the user wants to put a local app on the public web behind an auth gate quickly — "deploy this with a password", "put auth on this and ship it", "expose this app but lock it down", "quick dirty auth". Detects the app shape (Next.js, Node server, or static), applies a server-enforced gate (shared password by default; Cloudflare Access when the domain is already on Cloudflare), deploys to Vercel, and reports a live URL. Optimizes for hands-off operation. Also handles teardown.
 license: MIT
 metadata:
-  version: "1.0.3"
+  version: "1.0.4"
 ---
 
 # quick-dirty-auth
@@ -33,17 +33,36 @@ Run them from the **skill directory**, passing the target project path. They are
    - **password route:** generate a password (`password.mjs`), copy the gate template (`gate-apply.mjs`). For `node-server`, show the user the mount instruction. Record each written file in `.qda.json` (`manifest.mjs`). You will set `GATE_PASSWORD` as a Vercel env var in step 5.
    - **cloudflare route:** no app files. (DNS + Access happen after deploy, in step 5, once the Vercel target exists.)
 5. **Deploy.** Use the route-specific sequence below — do NOT deploy to production before the gate is active.
-   - **password route (no public-unprotected window):**
-     1. Deploy a **preview** first: `vercel` (no `--prod`). Preview URLs are unguessable; treat them as private and do not share yet. This creates/links the Vercel project.
-     2. Set the gate secret for both environments: `vercel env add GATE_PASSWORD preview` and `vercel env add GATE_PASSWORD production` (pipe in the generated password each time).
-     3. Redeploy the preview (`vercel`) and verify the gate is active (a request without the cookie returns 401). Only proceed once the gate works.
-     4. Promote to production: `vercel --prod`. Because `GATE_PASSWORD` is already set in production, the production URL is gated from its first response — no open window.
-     5. Record the production URL + credential in `.qda.json`.
+   - **password route:**
+     1. Link the project: `vercel link --yes`. Set the password before any deploy, for both environments, with no trailing newline:
+        - `printf '%s' "$PASSWORD" | vercel env add GATE_PASSWORD preview`
+        - `printf '%s' "$PASSWORD" | vercel env add GATE_PASSWORD production`
+        - If the variable already exists, replace it in both environments with `--force` after the user agrees. A stored value cannot be read back reliably, and the two environments can differ.
+     2. Deploy a preview: `vercel`.
+     3. Check the preview. Use `vercel curl`, which passes Vercel's own deployment protection. The CLI documents this at vercel.com/docs/cli/curl. The CLI can create a protection bypass secret on the project. Tell the user this and get their yes before the first `vercel curl`. Without a yes, create no new secret: the user opens the preview in their signed-in browser. Promote only when they report the sign-in form and that the password opens the site.
+        - `vercel curl / --deployment <preview-url> -- -s -D - -o /dev/null` must show `x-qda-gate: form`.
+        - Run the same command with `-H "Cookie: qda_auth=$PASSWORD"`. It must show status 200 and no `x-qda-gate` header. This proves the stored password is the one the user receives.
+        - Generated passwords need no encoding. If the user chose the password and it has other characters, URL-encode it in the cookie for the static gate.
+        - `x-qda-gate: locked` means the deployment has no password. Set the password and redeploy.
+        - For any other result, stop. Show the user the status and headers. Do not promote.
+     4. Promote: `vercel --prod`.
+     5. Check the production domain that visitors use. Use the project domain or the alias that `vercel --prod` reports. Do not use the hashed deployment URL, which Vercel can protect. Run plain `curl -s -D - -o /dev/null https://<production-domain>`.
+        - `x-qda-gate: form` means the gate answers. Then add `-H "Cookie: qda_auth=$PASSWORD"` to the same command. Status 200 with no `x-qda-gate` header means the password works: pass. If the form still shows, the stored production password differs: set it again and redeploy.
+        - A redirect (status 3xx): run both checks on the address in the `location` header.
+        - Without the cookie, status 200 with no `x-qda-gate` header means the site is open. Remove the deployment this run made: `vercel remove <deployment-url> --yes`. Then tell the user.
+        - For any other result, do not report success. Show the user the status and headers.
+   - After the checks pass, record the production URL and the credential in `.qda.json`.
    - **cloudflare route:** add the custom hostname (`vercel domains add` / alias to the deployment), then via `cloudflare.mjs`, in order: `const accountId = await findAccountId()`; `const recordId = await upsertProxiedCname(zoneId, host, 'cname.vercel-dns.com')` (zoneId from the step-1 `findZone`); `const appId = await createAccessApp(accountId, host)`; `await createAccessPolicy(accountId, appId, [userEmail])`. Record each resource (zone id, record id, app id, policy id) in `.qda.json` as you go.
 6. **Report.** Print the live URL, the route used, and the credential:
    - password route → the URL + the password.
    - cloudflare route → the URL + "Login: email OTP, allowed = <emails>".
 7. **Offer upgrade.** If you used the password route but `domainOnCloudflare` was true, tell the user they can re-run with `--access` for real email login.
+
+## Already published with 1.0.3 or earlier
+
+- Signs: `.qda.json` exists, and the gate file in the project has no `x-qda-gate`.
+- Tell the user. Applying the gate again overwrites the gate file. Show any edits they made first, then ask.
+- After the new gate is deployed, older deployments still hold the old gate at their own URLs. List them with `vercel ls`. Remove them only with the user's yes.
 
 ## Teardown (`--teardown`)
 Read `.qda.json` from the project. Reverse in order: remove the Vercel deployment/alias; if cloudflare route, delete the Access policy, Access app, and DNS record via `cloudflare.mjs`; delete any gate files the manifest says you created. Confirm what you'll remove before doing it.

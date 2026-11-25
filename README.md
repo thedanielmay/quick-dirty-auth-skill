@@ -22,6 +22,11 @@ ln -s /path/to/quick-dirty-auth-skill ~/.claude/skills/quick-dirty-auth
 
 The scripts run with Node, and the deploy goes to Vercel.
 
+## Gate status
+
+The gate stays locked until `GATE_PASSWORD` is set. Visitors see a locked page during that time.
+If a site was published with 1.0.3 or earlier, apply the gate again, redeploy, and remove the old deployments.
+
 ## Changes
 
 See [CHANGELOG.md](CHANGELOG.md).
