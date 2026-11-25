@@ -26,13 +26,25 @@ const page = () => new Response(
     location.reload();
   });
   </script>`,
-  { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } },
+  { status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'x-qda-gate': 'form' } },
+);
+
+const locked = () => new Response(
+  'Locked: the site owner has not finished setting up the sign-in.',
+  {
+    status: 503,
+    headers: {
+      'x-qda-gate': 'locked',
+      'cache-control': 'no-store',
+      'content-type': 'text/plain; charset=utf-8',
+    },
+  },
 );
 
 export const config = { matcher: '/((?!favicon.ico).*)' };
 
 export default function middleware(req: Request) {
-  if (!PASSWORD) return; // gate disabled when unset → continue to content
+  if (!PASSWORD.trim()) return locked(); // no password set yet → hold the site locked until setup is finished
   const cookie = req.headers.get('cookie') ?? '';
   const want = `${COOKIE}=${encodeURIComponent(PASSWORD)}`;
   if (cookie.split(';').some((c) => c.trim() === want)) return; // correct cookie → continue

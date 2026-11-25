@@ -2,6 +2,7 @@
 //   const gate = require('./qda-gate'); app.use(gate);
 const COOKIE = 'qda_auth';
 const PASSWORD = process.env.GATE_PASSWORD || '';
+const LOCKED_TEXT = 'Locked: the site owner has not finished setting up the sign-in.';
 
 const page = (error = '') =>
   `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
@@ -15,7 +16,14 @@ const page = (error = '') =>
   <button>Enter</button></form>`;
 
 module.exports = function qdaGate(req, res, next) {
-  if (!PASSWORD) return next();
+  if (!PASSWORD.trim()) {
+    res.statusCode = 503;
+    res.setHeader('x-qda-gate', 'locked');
+    res.setHeader('cache-control', 'no-store');
+    res.setHeader('content-type', 'text/plain; charset=utf-8');
+    res.end(LOCKED_TEXT);
+    return;
+  }
   const cookies = Object.fromEntries(
     (req.headers.cookie || '').split(';').map((c) => {
       const s = c.trim();
@@ -34,9 +42,9 @@ module.exports = function qdaGate(req, res, next) {
         res.setHeader('set-cookie', `${COOKIE}=${PASSWORD}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800`);
         res.statusCode = 303; res.setHeader('location', req.url); return res.end();
       }
-      res.statusCode = 401; res.setHeader('content-type', 'text/html'); res.end(page('Wrong password'));
+      res.statusCode = 401; res.setHeader('content-type', 'text/html'); res.setHeader('x-qda-gate', 'form'); res.end(page('Wrong password'));
     });
     return;
   }
-  res.statusCode = 200; res.setHeader('content-type', 'text/html'); res.end(page());
+  res.statusCode = 200; res.setHeader('content-type', 'text/html'); res.setHeader('x-qda-gate', 'form'); res.end(page());
 };
