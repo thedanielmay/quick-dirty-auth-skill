@@ -82,7 +82,7 @@ async function runEdge({ password, request, latePassword }) {
   const req = {
     headers: { get: (name) => (name.toLowerCase() === 'cookie' ? (request.cookie || null) : null) },
   };
-  const res = mod.default(req);
+  const res = await mod.default(req);
   if (res == null) return normalize({ contentServed: true });
   return normalize({
     status: res.status,

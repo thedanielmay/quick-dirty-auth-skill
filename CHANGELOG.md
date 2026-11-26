@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0 - 2026-11-26
+
+- The Cloudflare route checks the Cloudflare Access JWT inside the app on every request, with the same gate templates as the password route.
+- Both `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` must be set. One variable alone locks the site with 503 and `x-qda-gate: locked`. The password is ignored when Access is configured.
+- Denied requests return 403 with `x-qda-gate: access`. The gate checks `alg` before key lookup, verifies RS256 with Web Crypto, and validates issuer, audience and time claims.
+- Cert keys are cached per team, with one refetch when a `kid` is not cached. A fetch failure or a thrown error denies the request.
+- Fastify hooks call `reply.hijack()` before ending the response. The Node 18 gates load Web Crypto from `node:crypto`.
+- The Cloudflare client reads `auth_domain`, returns the app audience with a read-back fallback, adds every allowed email to the policy, and exposes the delete calls.
+- The CNAME step reads existing DNS records first and refuses to overwrite a record this skill did not create.
+- `cloudflare.mjs` gains a command line entry that runs from a path with a space and through a symlink.
+- SKILL.md records the Access setup, preview checks, live URL checks and teardown of recorded IDs.
+- `manifest.mjs record` and `manifest.mjs forget` keep each Cloudflare id and the Vercel domain in `.qda.json` until its delete succeeds.
+
 ## 1.1.0 - 2026-11-26
 
 - The password is never written to `.qda.json`. The manifest keeps a flag that a password is set, and removes any password field on read.
