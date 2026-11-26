@@ -9,7 +9,8 @@ const REFRESH_MS = 60 * 60 * 1000;
 const REFETCH_MS = 60 * 1000;
 
 async function fetchKeys(url: string) {
-  const response = await fetch(url);
+  // A certificate request that never answers must not hold every visitor.
+  const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
   if (!response.ok) throw new Error('certificate fetch failed');
   const data = await response.json();
   if (!Array.isArray(data?.keys)) throw new Error('certificate keys missing');

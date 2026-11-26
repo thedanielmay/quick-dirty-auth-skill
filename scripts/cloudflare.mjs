@@ -37,10 +37,20 @@ export function makeClient({ token, fetch = globalThis.fetch, chooseAccount, acc
       try {
         const org = await call(`/accounts/${account}/access/organizations`);
         const record = Array.isArray(org) ? org[0] : org;
-        return record?.auth_domain ?? null;
+        if (!record?.auth_domain) throw new Error('No auth_domain was returned.');
+        return record.auth_domain;
       } catch (error) {
-        throw new Error(`Zero Trust is not enabled on this account. Enable it once in the Cloudflare dashboard, then retry. ${error.message}`);
+        throw new Error(`Could not read the Zero Trust organisation: ${error.message} If Zero Trust is not enabled, enable it once in the Cloudflare dashboard. If it is, check the token permissions. Then retry.`);
       }
+    },
+
+    // Read only. Says whether the hostname is unused, already points at the target, or serves something else.
+    async checkCname(zoneId, name, target) {
+      const listed = await call(`/zones/${zoneId}/dns_records?name=${encodeURIComponent(name)}`);
+      const records = Array.isArray(listed) ? listed : [];
+      if (!records.length) return { status: 'free' };
+      const matches = records.every((r) => r.proxied === true && r.type === 'CNAME' && r.content === target);
+      return { status: matches ? 'points-at-target' : 'in-use', records: records.map((r) => ({ id: r.id, type: r.type })) };
     },
 
     async upsertProxiedCname(zoneId, name, target, { recordId } = {}) {
@@ -87,11 +97,16 @@ export function makeClient({ token, fetch = globalThis.fetch, chooseAccount, acc
 
     async createAccessPolicy(account, appId, emails) {
       const allowed = Array.isArray(emails) ? emails : [emails];
+      if (!allowed.length || !allowed.every((e) => typeof e === 'string' && e.includes('@'))) {
+        throw new Error('Give at least one email address, and only email addresses.');
+      }
       const pol = await call(`/accounts/${account}/access/apps/${appId}/policies`, {
         method: 'POST',
         body: { name: 'qda-allow', decision: 'allow', include: allowed.map((email) => ({ email: { email } })) },
       });
-      return pol.id;
+      // The emails come from the Cloudflare answer, so the user sees what was saved.
+      const saved = (pol.include ?? []).map((entry) => entry?.email?.email).filter(Boolean);
+      return { id: pol.id, emails: saved };
     },
 
     async deleteAccessPolicy(account, appId, policyId) {
@@ -115,6 +130,7 @@ export const COMMANDS = {
   'auth-domain': { usage: '<accountId>', run: (cf, [account]) => cf.getAuthDomain(account) },
   'create-app': { usage: '<accountId> <hostname>', run: (cf, [account, host]) => cf.createAccessApp(account, host) },
   'create-policy': { usage: '<accountId> <appId> <email...>', run: (cf, [account, appId, ...emails]) => cf.createAccessPolicy(account, appId, emails) },
+  'check-cname': { usage: '<zoneId> <name> <target>', run: (cf, [zoneId, name, target]) => cf.checkCname(zoneId, name, target) },
   'upsert-cname': {
     usage: '<zoneId> <name> <target> [recordId]',
     run: (cf, [zoneId, name, target, recordId]) => cf.upsertProxiedCname(zoneId, name, target, recordId ? { recordId } : {}),
@@ -162,7 +178,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
         rl.close();
       }
     };
-    const cf = makeClient({ token: process.env.CF_API_TOKEN, chooseAccount });
+    // Without a terminal nobody can answer, so the command lists the accounts and stops.
+    const cf = makeClient({ token: process.env.CF_API_TOKEN, chooseAccount: process.stdin.isTTY ? chooseAccount : undefined });
     try {
       await runCommand(command, args, cf);
     } catch (error) {

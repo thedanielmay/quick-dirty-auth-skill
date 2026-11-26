@@ -95,7 +95,7 @@ test('the Cloudflare route checks the Access JWT at the app', () => {
   }
   assert.match(section, /Vercel Standard Protection/i);
   assert.match(section, /password is ignored/i);
-  assert.match(section, /never public/i);
+  assert.match(section, /gated from the moment/i);
   assert.match(section, /no path is exempt/i);
 });
 

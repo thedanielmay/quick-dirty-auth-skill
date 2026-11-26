@@ -178,7 +178,7 @@ test('createAccessPolicy includes every email', async () => {
   });
   const cf = makeClient({ token: 't', fetch });
   const emails = ['one@example.com', 'two@example.com', 'three@example.com'];
-  assert.equal(await cf.createAccessPolicy('acct777', 'app42', emails), 'pol9');
+  assert.equal((await cf.createAccessPolicy('acct777', 'app42', emails)).id, 'pol9');
   const body = bodyOf(calls, 'POST');
   assert.equal(body.name, 'qda-allow');
   assert.equal(body.decision, 'allow');
@@ -237,6 +237,7 @@ const commandMethods = [
   ['create-app', 'createAccessApp'],
   ['create-policy', 'createAccessPolicy'],
   ['upsert-cname', 'upsertProxiedCname'],
+  ['check-cname', 'checkCname'],
   ['delete-policy', 'deleteAccessPolicy'],
   ['delete-app', 'deleteAccessApp'],
   ['delete-dns', 'deleteDnsRecord'],
@@ -279,4 +280,30 @@ test('runCommand passes an optional record id to the CNAME step', async () => {
 
 test('runCommand rejects an unknown command', async () => {
   await assert.rejects(() => runCommand('not-a-command', [], {}, () => {}), /unknown command/i);
+});
+
+test('createAccessPolicy returns the saved emails and refuses an empty or malformed list', async () => {
+  const { fetch, calls } = tracingFetch({
+    'POST /accounts/a/access/apps/p/policies': { id: 'pol1', include: [{ email: { email: 'one@example.com' } }] },
+  });
+  const cf = makeClient({ token: 't', fetch });
+  assert.deepEqual(await cf.createAccessPolicy('a', 'p', ['one@example.com']), { id: 'pol1', emails: ['one@example.com'] });
+  for (const bad of [[], ['not-an-email']]) await assert.rejects(() => cf.createAccessPolicy('a', 'p', bad), /email/);
+  assert.equal(calls.length, 1, 'a refused list sends nothing');
+});
+
+test('checkCname only reads, and tells a free hostname from one in use', async () => {
+  const target = 'cname.vercel-dns.com';
+  const cases = [
+    [[], 'free'],
+    [[{ id: 'r', type: 'CNAME', content: target, proxied: true }], 'points-at-target'],
+    [[{ id: 'r', type: 'A', content: '192.0.2.1', proxied: true }], 'in-use'],
+    [[{ id: 'r', type: 'CNAME', content: target, proxied: false }], 'in-use'],
+  ];
+  for (const [records, status] of cases) {
+    const { fetch, calls } = tracingFetch({ 'GET /zones/z/dns_records': records });
+    const cf = makeClient({ token: 't', fetch });
+    assert.equal((await cf.checkCname('z', 'host.example.com', target)).status, status);
+    assert.ok(calls.every((c) => !c.init?.method || c.init.method === 'GET'));
+  }
 });

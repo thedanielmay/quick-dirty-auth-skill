@@ -107,7 +107,7 @@ test('cloudflare.mjs lists every subcommand the Cloudflare route calls', () => {
   const help = run('cloudflare.mjs', '--help');
   for (const command of [
     'find-zone', 'find-account', 'auth-domain', 'create-app', 'create-policy',
-    'upsert-cname', 'delete-policy', 'delete-app', 'delete-dns',
+    'check-cname', 'upsert-cname', 'delete-policy', 'delete-app', 'delete-dns',
   ]) {
     assert.match(help, new RegExp(command), command);
   }

@@ -121,7 +121,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
   } else if (command === 'record') {
     const current = loadManifest(root) ?? emptyManifest();
     saveManifest(root, recordResource(current, JSON.parse(rest[0] ?? 'null')));
-    console.log(`recorded: ${rest[0]}`);
+    const { kind, id } = JSON.parse(rest[0]);
+    console.log(`recorded: ${kind} ${id}`);
   } else if (command === 'forget') {
     const current = loadManifest(root) ?? emptyManifest();
     const next = forgetResource(current, rest[0], rest[1]);

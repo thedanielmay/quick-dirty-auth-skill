@@ -611,3 +611,11 @@ for (const [name, load] of runners.filter(([n]) => /^(express|fastify)/.test(n))
     }
   });
 }
+
+test('every template puts a time limit on the certificate request', async () => {
+  const { readFile } = await import('node:fs/promises');
+  for (const name of ['express-gate.js', 'fastify-gate.js', 'next-middleware.ts', 'edge-middleware.ts']) {
+    const source = await readFile(new URL(`../templates/${name}`, import.meta.url), 'utf8');
+    assert.match(source, /fetch\(url, \{ signal: AbortSignal\.timeout\(5000\) \}\)/, name);
+  }
+});
