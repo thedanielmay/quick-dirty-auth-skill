@@ -155,8 +155,18 @@ export function teardownGate(root, manifest, io = {}) {
       }
     }
   }
+  // Report the ignore files that still list the record file; teardown leaves them alone.
+  const ignoreLines = ['.gitignore', '.vercelignore'].filter((name) => {
+    const path = join(root, name);
+    if (!exists(path)) return false;
+    try {
+      return String(read(path)).split(/\r?\n/).some((line) => line.trim() === '.qda.json');
+    } catch {
+      return false;
+    }
+  });
   if (manifest) persist({ ...manifest, resources: remaining });
-  return { removed, restored, kept };
+  return { removed, restored, kept, ignoreLines };
 }
 
 // One record per file. A later apply updates it.
@@ -308,6 +318,34 @@ const listFiles = (folder) => {
   }
 };
 
+// Other files the app can start from: every word of the start script and of
+// "main", with the usual endings, plus .mts and .cts entry files. A folder's own
+// "main" counts too. These files can only cause a refusal. They never give a pass.
+function otherStarts(pkg, readJson) {
+  const words = [pkg?.main, ...String(pkg?.scripts?.start ?? '').split(/[\s;&|()=<>]+/)]
+    .filter((w) => typeof w === 'string')
+    .map((w) => w.replace(/["']/g, ''))
+    .filter((w) => w && !w.startsWith('-'));
+  const folderMains = words.flatMap((w) => {
+    const main = readJson(posix.join(w, 'package.json'))?.main;
+    return typeof main === 'string' ? [posix.join(w, main)] : [];
+  });
+  const endings = ['js', 'mjs', 'cjs', 'ts', 'mts', 'cts'];
+  const guesses = [...words, ...folderMains].flatMap((w) =>
+    ['', ...endings.map((x) => `.${x}`), '/index.js'].map((end) => posix.normalize(`${w}${end}`)));
+  const typed = ['server', 'index', 'app'].flatMap((n) => [n, `src/${n}`])
+    .flatMap((n) => [`${n}.mts`, `${n}.cts`]);
+  return [...new Set([...guesses, ...typed])];
+}
+
+// The text of a file. A folder has no text. Any other read error stops the check.
+function readFile(path, read) {
+  try { return read(path); } catch (error) {
+    if (error.code === 'EISDIR') return '';
+    throw error;
+  }
+}
+
 export function verifyMounted(root, shape, io = {}) {
   const { exists = (p) => existsSync(join(root, p)),
           read = (p) => readFileSync(join(root, p), 'utf8'),
@@ -322,6 +360,24 @@ export function verifyMounted(root, shape, io = {}) {
   const pkg = exists('package.json') ? readJson('package.json') : null;
   if (pkg?.type === 'module') {
     return { mounted: false, reason: 'package.json declares ES modules, and qda-gate.js cannot load there', entry: null };
+  }
+  // A host can serve public/ as static files, so an Express project keeps no files there.
+  if (shape === 'node-server') {
+    const served = list('public').some((f) => {
+      if (['.DS_Store', '.gitkeep'].includes(posix.basename(f))) return false;
+      const path = `public/${f}`;
+      if (!exists(path)) return false;
+      try { read(path); return true; } catch (error) { return error.code !== 'EISDIR'; }
+    });
+    if (served) {
+      return { mounted: false, reason: 'public/ holds files that can be served without the gate; serve them through the app from another folder after the gate', entry: null };
+    }
+  }
+  // Vercel runs each file under api/ as its own function, whatever its language.
+  const foreign = list('api').find((f) => /\.(?:py|go|rb)$/i.test(f));
+  if (foreign) {
+    const entry = `api/${foreign}`;
+    return { mounted: false, reason: `${entry} can answer without the gate`, entry };
   }
   const started = /(?<![\w-])(?:node|nodemon|tsx|ts-node)\s+(?:--?[\w-]+(?:=\S+)?\s+)*([\w./-]+\.[cm]?[jt]s)\b/
     .exec(pkg?.scripts?.start ?? '')?.[1];
@@ -346,6 +402,11 @@ export function verifyMounted(root, shape, io = {}) {
     if (!result.mounted) return { ...result, entry };
     passed ??= { ...result, entry };
   }
+  for (const entry of otherStarts(pkg, readJson)) {
+    if (!exists(entry)) continue;
+    const result = checkEntry(readFile(entry, read), shape);
+    if (result && !result.mounted) return { ...result, entry };
+  }
   return passed ?? { mounted: false, reason: 'no server entry creates an app and mounts ./qda-gate', entry: null };
 }
 
@@ -357,11 +418,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
   if (command === 'verify') {
     const result = verifyMounted(args[2], args[1]);
     console.log(`mounted: ${result.mounted} (${result.reason})`);
+    if (!result.mounted && result.entry) console.log(`file: ${result.entry}`);
     if (!result.mounted) process.exitCode = 1;
   } else if (command === 'teardown') {
     const result = teardownGate(args[1], loadManifest(args[1]));
     console.log(`removed: ${result.removed.join(', ') || 'none'}; restored: ${result.restored.join(', ') || 'none'}`);
     if (result.kept.length) console.log(`kept, because it changed or has no backup: ${result.kept.join(', ')}`);
+    if (result.ignoreLines.length) console.log(`the .qda.json line stays in ${result.ignoreLines.join(', ')}`);
   } else {
     const shape = command === 'apply' ? args[1] : command;
     const root = command === 'apply' ? args[2] : args[1];

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0 - 2026-11-26
+
+- `verify` refuses a `node-server` project with files in `public/`. `.DS_Store` and `.gitkeep` do not count. Serve those files through the app from another folder after the gate.
+- `verify` refuses `.py`, `.go` and `.rb` files under `api/` on `node-server` and `fastify`.
+- `verify` also reads the files that the start script and `main` name, with or without an extension, and `.mts` and `.cts` entry files. An app without the gate in one of them is refused.
+- When one file causes a refusal, `verify` prints its name.
+- Teardown names the ignore files that still hold the `.qda.json` line, and leaves the line in place.
+
 ## 1.2.0 - 2026-11-26
 
 - The Cloudflare route checks the Cloudflare Access JWT inside the app on every request, with the same gate templates as the password route.
