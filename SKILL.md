@@ -1,9 +1,9 @@
 ---
 name: quick-dirty-auth
-description: Use when the user wants to put a local app on the public web behind a sign-in gate quickly: "deploy this with a password", "put auth on this and ship it", "expose this app but lock it down", "quick dirty auth". Detects the app shape (Next.js, Node server, Fastify, or static), applies a server-enforced gate (shared password by default; Cloudflare Access when the domain is already on Cloudflare), deploys to Vercel, and reports a live URL. Optimizes for hands-off operation. Also handles teardown.
+description: Use when the user wants to put a local app on the public web behind a sign-in gate quickly: "deploy this with a password", "put auth on this and ship it", "expose this app but lock it down", "quick dirty auth". Detects the app shape (Next.js, Node server, Fastify, or static), applies a server-enforced gate (shared password by default; Cloudflare Access JWT check when the domain is already on Cloudflare), deploys to Vercel, and reports a live URL. Optimizes for hands-off operation. Also handles teardown.
 license: MIT
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # quick-dirty-auth
@@ -11,7 +11,7 @@ metadata:
 Deploy a local app to the web **with an auth gate**, as hands-off as possible. Vercel already makes deploy trivial; this skill fills the gap Vercel leaves, access control, and wires deploy + auth into one flow.
 
 ## When to use
-The user has a local app (often one you just built/previewed) and wants it on the web, but not wide open. Default gate is a shared password. If their domain is already on Cloudflare, prefer Cloudflare Access (real email login, zero app code).
+The user has a local app (often one you just built/previewed) and wants it on the web, but not wide open. Default gate is a shared password. If their domain is already on Cloudflare, prefer Cloudflare Access with the JWT check in the app (real email login, no app dependency).
 
 ## Scripts (all in `scripts/`, run with `node`)
 Run them from the **skill directory**, passing the target project path. They are unit-tested; trust their contracts. Requires Node 22.18 or newer.
@@ -37,7 +37,11 @@ Run them from the **skill directory**, passing the target project path. They are
      - Never overwrite a file silently. If a destination exists and is not a gate this skill wrote, stop with a clear message and show the file. A `--force` option exists only after the user agrees. It saves a backup copy next to the file.
      - Record each written file and a password-set flag in `.qda.json` (`manifest.mjs`). Never record the password value.
      - You will set `GATE_PASSWORD` as a Vercel env var in step 5.
-   - **cloudflare route:** no app files. (DNS + Access happen after deploy, in step 5, once the Vercel target exists.)
+   - **cloudflare route:** copy the right gate template with `gate-apply.mjs <shape> <project>`. The app checks the `Cf-Access-Jwt-Assertion` header itself on each request. No npm dependency is added. Keep Vercel Standard Protection as an extra layer if the project already uses it. Do not turn on all-deployment Vercel Authentication: it would block allowed visitors who are not on the Vercel team.
+     - Both Access variables set: JWT check only, and the password is ignored.
+     - Only one set: 503 with `x-qda-gate: locked`.
+     - No Access variables and a password set: the current password gate.
+     - Nothing set: 503 locked. No path is exempt.
 5. **Deploy.** Use the route-specific sequence below. Do NOT deploy to production before the gate is active. Do not deploy at all until the mount check above passes. The `x-qda-gate` checks below are the proof that the gate runs in the deployment.
    - **password route:**
      1. Link the project: `vercel link --yes`. Set the password before any deploy, for both environments, with no trailing newline:
@@ -59,11 +63,40 @@ Run them from the **skill directory**, passing the target project path. They are
         - Without the cookie, status 200 with no `x-qda-gate` header means the site is open. Remove the deployment this run made: `vercel remove <deployment-url> --yes`. Then tell the user.
         - For any other result, do not report success. Show the user the status and headers.
    - After the checks pass, record the production URL and a password-set flag in `.qda.json`. Never record the password value.
-   - **cloudflare route:** add the custom hostname (`vercel domains add` / alias to the deployment), then via `cloudflare.mjs`, in order: `const accountId = await findAccountId()`; `const recordId = await upsertProxiedCname(zoneId, host, 'cname.vercel-dns.com')` (zoneId from the step-1 `findZone`); `const appId = await createAccessApp(accountId, host)`; `await createAccessPolicy(accountId, appId, [userEmail])`. Record each resource (zone id, record id, app id, policy id) in `.qda.json` as you go.
+   - **cloudflare route:** follow the Cloudflare route below in order. Do not publish the custom host until the gate checks pass.
 6. **Report.** Print the live URL, the route used, and the credential:
    - password route → the URL + the password. Show the password once, in chat.
    - cloudflare route → the URL + "Login: email OTP, allowed = <emails>".
 7. **Offer upgrade.** If you used the password route but `domainOnCloudflare` was true, tell the user they can re-run with `--access` for real email login.
+
+### Cloudflare route
+
+The app checks the Cloudflare Access JWT itself. A host allow list or Vercel deployment protection leaves a direct request to Vercel with the custom host open. Vercel Standard Protection stays only as an extra layer. All-deployment Vercel Authentication would block allowed visitors who are not on the Vercel team.
+
+1. **Ask for the hostname and the allowed emails.** The hostname must sit inside the found zone from step 1. Ask the user for every email that may sign in.
+2. **Get the account and team domain.** Use `cloudflare.mjs find-account`. If more than one account exists, ask the user which one to use and pass the chosen id. Then use `cloudflare.mjs auth-domain <accountId>` for `auth_domain`. If it fails, give the one-time Zero Trust step (enable Zero Trust, Free plan) and wait.
+3. **Apply the gate template.** Copy it with `gate-apply.mjs <shape> <project>` and record the written file in `.qda.json`. The template reads `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` at request time. It reads the `Cf-Access-Jwt-Assertion` header and denies with 403 and `x-qda-gate: access` unless every check passes:
+   - `alg` is `RS256`, checked before any key lookup. A `none` or `HS256` token never reaches the cert endpoint.
+   - `kid` is in `https://<team>/cdn-cgi/access/certs`. Keys are cached, with one refetch for an unknown `kid`.
+   - Web Crypto verifies `RSASSA-PKCS1-v1_5` with SHA-256.
+   - `iss` equals `https://<team>`; the team variable works with or without the scheme.
+   - `aud`, a string or an array, contains `CF_ACCESS_AUD`.
+   - `exp` is in the future and `nbf` is not.
+   - Any fetch failure or thrown error denies. Express catches async errors and ends the response. Fastify uses `addHook('onRequest', ...)` over `req.raw` and `reply.raw`, and calls `reply.hijack()` before the gate ends the response. Node 18 gates load Web Crypto from `require('node:crypto').webcrypto`.
+   - With only one of the two Access variables set, lock with 503 and `x-qda-gate: locked`. No path is exempt. The password is ignored when Access is configured.
+4. **Create the Access app and the policy.** Use `cloudflare.mjs create-app <accountId> <host>`. It returns the app id and `aud`; a missing `aud` on create is read back with `GET .../apps/{id}`. Record both in `.qda.json`. Then use `cloudflare.mjs create-policy <accountId> <appId> <email...>` with every allowed email and record the policy id. Read each ID back after the write.
+5. **Link and set variables.** Run `vercel link`. Set `CF_ACCESS_TEAM_DOMAIN` to the team domain and `CF_ACCESS_AUD` to the returned `aud`, for preview and production.
+6. **Deploy a preview.** Run `vercel`. The preview address is a `vercel.app` URL, so it shows the 403 access text with `x-qda-gate: access`, not the Access sign-in page. With the user's yes, confirm this with `vercel curl` on the preview. Without a yes, the user opens the preview in their browser and sees the same 403 text. The Access sign-in page appears only on the custom host after step 8.
+7. **Promote and add the host.** Run `vercel --prod`, then `vercel domains add <host>`, then `cloudflare.mjs upsert-cname <zoneId> <host> cname.vercel-dns.com` with the zone id from step 1. The command prints `{ "id": "...", "created": true/false }`. Record the DNS record id only when `created` is true. A result of `created: false` means the record already existed, so leave it out of `.qda.json` and keep it out of teardown. The client reads existing records first, refuses a record that is not proxied, and never overwrites a record this skill did not create. The host is never public until the checks in step 8 pass.
+8. **Check the live gate.**
+   - `https://<host>` redirects (302) to `<team>.cloudflareaccess.com`.
+   - `curl --connect-to <host>:443:cname.vercel-dns.com:443 https://<host>/` returns 403 with `x-qda-gate: access`.
+   - Plain curl on `<project>.vercel.app` returns 403 `access` or a Vercel 401, never 200.
+   - `vercel curl` on the hashed preview URL returns 403 with `x-qda-gate: access`.
+   - The user signs in with an allowed email and sees the app.
+   - A redirect (status 3xx): follow the `location` header and repeat the check on that address.
+9. **Report the emails.** Read back from the policy response every allowed email and tell the user the list.
+10. **Teardown deletes only recorded IDs:** the DNS record this skill created, the policy, the app, the Vercel domain, both Access variables and the gate files. A DNS record with `created: false` is never recorded. Confirm the removal list before doing it.
 
 ## Already published with 1.0.3 or earlier
 
@@ -73,7 +106,7 @@ Run them from the **skill directory**, passing the target project path. They are
 - After the new gate is deployed, older deployments still hold the old gate at their own URLs. List them with `vercel ls`. Remove them only with the user's yes.
 
 ## Teardown (`--teardown`)
-Read `.qda.json` from the project. Reverse in order: remove the Vercel deployment/alias; if cloudflare route, delete the Access policy, Access app, and DNS record via `cloudflare.mjs`; delete any gate files the manifest says this skill created, and restore any backup the manifest records. Leave files this skill did not create in place. Confirm the removal list before doing it.
+Read `.qda.json` from the project. Reverse in order: remove the Vercel deployment/alias; if cloudflare route, delete the recorded Access policy with `cloudflare.mjs delete-policy`, the Access app with `delete-app`, and the DNS record only records it created with `delete-dns`; then remove the Vercel domain and the Access variables; delete any gate files the manifest says this skill created, and restore any backup the manifest records. Leave files this skill did not create in place. Confirm the removal list before doing it.
 
 ## Failure handling
 Check every external call. On failure, STOP and report the actual error, never half-finish silently. Because `.qda.json` is written incrementally, a partial setup is still tearable-down.
@@ -81,4 +114,5 @@ Check every external call. On failure, STOP and report the actual error, never h
 ## Secrets
 - Vercel token: from one-time `vercel login`.
 - `CF_API_TOKEN` (cloudflare route only): scoped to DNS edit + Access edit.
+- `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` (cloudflare route): set for preview and production. The app reads both at request time.
 - A host health check sees 503 until `GATE_PASSWORD` is set. No path is exempt. Set the password before any deploy.

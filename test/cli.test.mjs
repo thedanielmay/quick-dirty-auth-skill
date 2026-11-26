@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -77,6 +77,35 @@ test('password.mjs prints a usable password', () => {
   assert.match(password, /^[A-Za-z0-9_-]+$/);
 });
 
+test('cloudflare.mjs lists every subcommand the Cloudflare route calls', () => {
+  const help = run('cloudflare.mjs', '--help');
+  for (const command of [
+    'find-zone', 'find-account', 'auth-domain', 'create-app', 'create-policy',
+    'upsert-cname', 'delete-policy', 'delete-app', 'delete-dns',
+  ]) {
+    assert.match(help, new RegExp(command), command);
+  }
+});
+
+const cloudflareWithoutToken = (command) => spawnSync(process.execPath, [join(root, 'scripts', 'cloudflare.mjs'), command], {
+  encoding: 'utf8',
+  env: { ...process.env, CF_API_TOKEN: '' },
+});
+
+test('cloudflare.mjs recognises upsert-cname before checking the token', () => {
+  const result = cloudflareWithoutToken('upsert-cname');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /CF_API_TOKEN/);
+  assert.doesNotMatch(result.stdout, /usage:/);
+});
+
+test('cloudflare.mjs rejects an unknown subcommand', () => {
+  const result = cloudflareWithoutToken('not-a-command');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr + result.stdout, /usage:|unknown command/);
+  assert.doesNotMatch(result.stderr, /CF_API_TOKEN/);
+});
+
 // Fault 5: the CLI records the ensured package.json and only removes its own copy.
 test('gate-apply records the static package.json and teardown removes it when unchanged', () => {
   const dir = tempRoot();
@@ -121,6 +150,7 @@ test('each CLI runs from a folder with a space and through a symlink', () => {
     ['password.mjs', [], /^[A-Za-z0-9_-]{24}$/],
     ['manifest.mjs', ['ignore', appRoot], /\.qda\.json/],
     ['gate-apply.mjs', ['apply', 'static', appRoot], /^applied /],
+    ['cloudflare.mjs', ['--help'], /^usage:/],
   ];
   const runThrough = (dir, link, args) =>
     execFileSync(process.execPath, [join(dir, link), ...args], { encoding: 'utf8', cwd: dir }).trim();

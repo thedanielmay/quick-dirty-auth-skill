@@ -62,15 +62,85 @@ test('package.json declares Node 22.18 or newer', () => {
 });
 
 // Release metadata.
-test('release metadata is 1.1.0', () => {
-  assert.equal(plugin.version, '1.1.0');
-  assert.match(skill, /^  version: "1\.1\.0"$/m);
+test('release metadata is 1.2.0', () => {
+  assert.equal(plugin.version, '1.2.0');
+  assert.match(skill, /^  version: "1\.2\.0"$/m);
 });
 
-test('the 1.1.0 changelog heading is first and describes new behaviour only', () => {
-  assert.match(changelog, /^## 1\.1\.0 - 2026-11-26$/m);
-  const section = changelog.split('## 1.1.0 - 2026-11-26')[1].split('\n## ')[0];
+test('the 1.2.0 changelog heading is first and describes new behaviour only', () => {
+  assert.match(changelog, /^## 1\.2\.0 - 2026-11-26$/m);
+  const section = changelog.split('## 1.2.0 - 2026-11-26')[1].split('\n## ')[0];
   assert.ok(section.split('\n').filter((l) => l.startsWith('- ')).length >= 5);
   assert.doesNotMatch(section, /1\.0\.3/);
   assert.doesNotMatch(section, /redeploy|apply the gate again|remove old deployments/i);
+});
+
+test('the 1.1.0 changelog section is retained', () => {
+  assert.match(changelog, /^## 1\.1\.0 - 2026-11-26$/m);
+  const section = changelog.split('## 1.1.0 - 2026-11-26')[1].split('\n## ')[0];
+  assert.ok(section.split('\n').filter((l) => l.startsWith('- ')).length >= 5);
+});
+
+test('the Cloudflare route checks the Access JWT at the app', () => {
+  const section = skill.split('### Cloudflare route')[1].split('\n## ')[0];
+  for (const needle of [
+    'CF_ACCESS_TEAM_DOMAIN', 'CF_ACCESS_AUD', 'Cf-Access-Jwt-Assertion',
+    'x-qda-gate: access', 'x-qda-gate: locked', 'RS256', '403', '503',
+  ]) {
+    assert.match(section, new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), needle);
+  }
+  assert.match(section, /Vercel Standard Protection/i);
+  assert.match(section, /password is ignored/i);
+  assert.match(section, /never public/i);
+  assert.match(section, /no path is exempt/i);
+});
+
+test('the Cloudflare route asks for the host, email list and account choice', () => {
+  const section = skill.split('### Cloudflare route')[1].split('\n## ')[0];
+  assert.match(section, /allowed emails/i);
+  assert.match(section, /inside the found zone/i);
+  assert.match(section, /more than one account/i);
+  assert.match(section, /Zero Trust/i);
+  assert.match(section, /vercel link/);
+  assert.match(section, /preview and production/i);
+});
+
+test('the Cloudflare route records IDs, checks the host and tears down recorded IDs', () => {
+  const section = skill.split('### Cloudflare route')[1].split('\n## ')[0];
+  assert.match(section, /\.qda\.json/);
+  assert.match(section, /connect-to/i);
+  assert.match(section, /cloudflareaccess\.com/);
+  assert.match(section, /never 200/i);
+  assert.match(section, /read back from the policy response/i);
+  assert.match(section, /deletes only recorded IDs/i);
+  assert.match(section, /Vercel domain/i);
+});
+
+test('the changelog only describes the new Cloudflare behaviour', () => {
+  const section = changelog.split('## 1.2.0 - 2026-11-26')[1].split('\n## ')[0];
+  assert.match(section, /Cloudflare Access/i);
+  assert.match(section, /JWT/i);
+  assert.match(section, /CNAME/i);
+});
+
+test('a DNS record is recorded for teardown only when this skill created it', () => {
+  const section = skill.split('### Cloudflare route')[1].split('\n## ')[0];
+  assert.match(section, /only when `created` is true/i);
+  assert.match(section, /created: false/i);
+  const teardown = skill.split('## Teardown (`--teardown`)')[1].split('\n## ')[0];
+  assert.match(teardown, /only records it created/i);
+});
+
+test('the preview URL shows the 403 access text rather than the Access sign-in page', () => {
+  const section = skill.split('### Cloudflare route')[1].split('\n## ')[0];
+  assert.match(section, /vercel\.app/);
+  assert.match(section, /403 access text/i);
+  assert.match(section, /not the Access sign-in page/i);
+  assert.match(section, /custom host/i);
+});
+
+test('the Cloudflare route uses CLI subcommands for its client calls', () => {
+  const section = skill.split('### Cloudflare route')[1].split('\n## ')[0];
+  assert.match(section, /cloudflare\.mjs upsert-cname/);
+  assert.doesNotMatch(section, /upsertProxiedCname\(/);
 });
