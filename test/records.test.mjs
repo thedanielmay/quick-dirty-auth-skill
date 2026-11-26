@@ -140,3 +140,45 @@ test('a secret field inside a record is removed from the file on read', async ()
   loadManifest(root);
   assert.doesNotMatch(await text(root, '.qda.json'), /dummy/);
 });
+
+test('a root app or pages folder keeps the Next gate at the root', async () => {
+  for (const files of [{ 'pages/index.tsx': 'x', 'src/app/store.ts': 'x' }, { 'app/page.tsx': 'x', 'src/app/page.tsx': 'x' }]) {
+    const root = await project(files);
+    assert.match(run('apply', 'next', root), /-> middleware\.ts[\s\S]*mounted: true/);
+    assert.equal(existsSync(join(root, 'src', 'middleware.ts')), false);
+  }
+});
+
+test('the Next and static checks need the gate where it is read', async () => {
+  assert.equal(verifyMounted(await project({ 'app/page.tsx': 'x', 'src/middleware.ts': MARK }), 'next').mounted, false);
+  assert.equal(verifyMounted(await project({ 'middleware.ts': 'user code' }), 'static').mounted, false);
+  assert.equal(verifyMounted(await project({ 'middleware.ts': MARK }), 'static').mounted, true);
+});
+
+test('a hand-on fails when another loading rule could pick a different file', async () => {
+  const handOn = "module.exports = require('../server');";
+  const open = "const app = require('express')();\n";
+  for (const files of [
+    { server: open, 'server.js': SERVER },
+    { 'server.mjs': SERVER, 'server/index.js': open },
+    { 'server/index.js': SERVER, 'server/package.json': '{"main":"open.js"}', 'server/open.js': open },
+    { 'server.js': SERVER, 'server.json': '{}' },
+    { 'server.js': SERVER, 'server.ts': open },
+  ]) {
+    const root = await project({ ...files, 'api/index.js': handOn });
+    assert.equal(verifyMounted(root, 'node-server').mounted, false, Object.keys(files).join());
+  }
+});
+
+test('a hand-on to a gated folder or by import and export default passes', async () => {
+  const folder = await project({ 'server/index.js': SERVER, 'api/index.js': "module.exports = require('../server');" });
+  assert.equal(verifyMounted(folder, 'node-server').mounted, true);
+  const typed = await project({ 'server.ts': SERVER, 'api/index.ts': "import app from '../server';\nexport default app;\n" });
+  assert.equal(verifyMounted(typed, 'node-server').mounted, true);
+});
+
+test('a file record without a path stops apply before any write', async () => {
+  const root = await project({ '.qda.json': '{"resources":[{"kind":"file"}]}' });
+  assert.throws(() => run('apply', 'static', root));
+  assert.equal(existsSync(join(root, 'middleware.ts')), false);
+});

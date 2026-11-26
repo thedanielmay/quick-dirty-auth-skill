@@ -50,13 +50,17 @@ export function refuseLink(root, path) {
   }
 }
 
+// A file record names its file, and any backup, as text.
+const wellFormed = (r) => Boolean(r) && typeof r === 'object' && (r.kind !== 'file'
+  || (typeof r.path === 'string' && (r.backup === undefined || typeof r.backup === 'string')));
+
 export function loadManifest(root) {
   const p = join(root, '.qda.json');
   refuseLink(root, p);
   if (!existsSync(p)) return null;
   const raw = JSON.parse(readFileSync(p, 'utf8'));
   const records = raw?.resources ?? [];
-  if (!raw || typeof raw !== 'object' || !Array.isArray(records) || !records.every((r) => r && typeof r === 'object')) {
+  if (!raw || typeof raw !== 'object' || !Array.isArray(records) || !records.every(wellFormed)) {
     throw new Error('.qda.json is damaged: it needs a list of records');
   }
   const stripped = stripSecrets(raw);

@@ -274,8 +274,11 @@ test('verifyMounted accepts a Fastify onRequest hook', () => {
 });
 
 test('verifyMounted passes for framework-mounted gates', () => {
-  assert.equal(verifyMounted('/app', 'static', vfs({})).mounted, true);
-  assert.equal(verifyMounted('/app', 'next', vfs({})).mounted, true);
+  const gate = vfs({ 'middleware.ts': '// qda-gate: quick-dirty-auth' });
+  for (const shape of ['static', 'next']) {
+    assert.equal(verifyMounted('/app', shape, gate).mounted, true);
+    assert.equal(verifyMounted('/app', shape, vfs({})).mounted, false, 'no gate file, no pass');
+  }
 });
 
 // --- fault 1: the gate mount must be the first app call, whatever the argument ---

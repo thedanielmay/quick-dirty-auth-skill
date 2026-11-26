@@ -26,8 +26,8 @@ const SRC_GATE = 'src/middleware.ts';
 const GATE_FILES = new Set([SRC_GATE,
   ...Object.values(MAP).flatMap((p) => [p.dest, ...(p.ensureFiles ?? []).map((f) => f.dest)])]);
 
-// Next.js reads src/middleware.ts when the pages are in src/.
-const usesSrc = (exists) => exists('src/app') || exists('src/pages');
+// Next.js reads the root app/ or pages/ folder first. It uses src/ only without them.
+const usesSrc = (exists) => !(exists('app') || exists('pages')) && (exists('src/app') || exists('src/pages'));
 
 export function planGate(shape) {
   if (shape === 'unknown') throw new Error('Cannot apply gate to unknown shape; disambiguate first.');
@@ -273,24 +273,31 @@ function checkEntry(source, shape) {
 }
 
 // A file under api/ whose whole content hands on another file of the project:
-// module.exports = require('./x'), the two line form of it, or export { default } from './x'.
+// require and export, import and export default, or export { default } from.
 const RE_EXPORT = new RegExp(String.raw`^\s*(?:['"]use strict['"]\s*;?\s*)?(?:`
   + String.raw`module\.exports\s*=\s*require\s*\(\s*['"](\.[^'"]+)['"]\s*\)`
   + String.raw`|const\s+([\w$]+)\s*=\s*require\s*\(\s*['"](\.[^'"]+)['"]\s*\)\s*;?\s*module\.exports\s*=\s*\2`
   + String.raw`|export\s*\{\s*default\s*\}\s*from\s*['"](\.[^'"]+)['"]`
+  + String.raw`|import\s+([\w$]+)\s+from\s*['"](\.[^'"]+)['"]\s*;?\s*export\s+default\s+\5`
   + String.raw`)\s*;?\s*$`);
+
+// The file a relative name loads. Null when another loading rule could pick a different file.
+function handOnTarget(base, exists, read) {
+  const isFile = (p) => { if (!exists(p)) return false; try { read(p); return true; } catch { return false; } };
+  if (/\.[cm]?[jt]s$/.test(base)) return isFile(base) ? base : null;
+  if (isFile(base) || [`${base}.json`, `${base}.node`, `${base}/package.json`].some((p) => exists(p))) return null;
+  const matches = [`${base}.js`, `${base}.ts`, `${base}/index.js`, `${base}/index.ts`].filter((p) => exists(p));
+  return matches.length === 1 ? matches[0] : null;
+}
 
 // An api/ file is guarded when it mounts the gate, or hands on a file that does.
 function guarded(file, shape, exists, read) {
   const source = read(file);
   const handOn = RE_EXPORT.exec(maskSource(source).code);
   if (!handOn) return Boolean(checkEntry(source, shape)?.mounted);
-  const base = posix.join(posix.dirname(file), handOn[1] ?? handOn[3] ?? handOn[4]);
+  const base = posix.join(posix.dirname(file), handOn[1] ?? handOn[3] ?? handOn[4] ?? handOn[6]);
   if (base.startsWith('..')) return false;
-  const kinds = ['js', 'mjs', 'cjs', 'ts'];
-  const named = /\.[cm]?[jt]s$/.test(base) ? [base] : [];
-  const target = [...named, ...kinds.map((k) => `${base}.${k}`), ...kinds.map((k) => `${base}/index.${k}`)]
-    .find((p) => exists(p));
+  const target = handOnTarget(base, exists, read);
   return Boolean(target && checkEntry(read(target), shape)?.mounted);
 }
 
@@ -305,11 +312,11 @@ export function verifyMounted(root, shape, io = {}) {
   const { exists = (p) => existsSync(join(root, p)),
           read = (p) => readFileSync(join(root, p), 'utf8'),
           list = (p) => listFiles(join(root, p)) } = io;
-  if (shape === 'next' && usesSrc(exists) && !(exists(SRC_GATE) && isQdaGate(read(SRC_GATE)))) {
-    return { mounted: false, reason: 'this project keeps its pages in src/, so the gate file must be src/middleware.ts', entry: null };
-  }
   if (shape === 'next' || shape === 'static') {
-    return { mounted: true, reason: 'the framework loads middleware.ts automatically', entry: null };
+    const gate = shape === 'next' && usesSrc(exists) ? SRC_GATE : 'middleware.ts';
+    const mounted = exists(gate) && isQdaGate(read(gate));
+    const reason = mounted ? `the framework loads ${gate} automatically` : `${gate} is missing or is not the gate`;
+    return { mounted, reason, entry: null };
   }
   const readJson = io.readJson ?? ((p) => { try { return JSON.parse(read(p)); } catch { return null; } });
   const pkg = exists('package.json') ? readJson('package.json') : null;
@@ -325,12 +332,13 @@ export function verifyMounted(root, shape, io = {}) {
   ])];
 
   // Vercel runs each file under api/ as its own function.
-  const open = list('api').filter((f) => /\.[cm]?[jt]s$/.test(f) && !/\.d\.ts$/.test(f)).map((f) => `api/${f}`)
-    .find((f) => !guarded(f, shape, exists, read));
+  const functions = list('api').filter((f) => /\.[cm]?[jt]s$/.test(f) && !/\.d\.ts$/.test(f)).map((f) => `api/${f}`);
+  const open = functions.find((f) => !guarded(f, shape, exists, read));
   if (open) return { mounted: false, reason: `${open} can answer without the gate`, entry: open };
 
-  // Every candidate file that creates an app must pass, and at least one must exist.
-  let passed = null;
+  // Every candidate file that creates an app must pass, and at least one guarded file must exist.
+  let passed = functions.length
+    ? { mounted: true, reason: 'the gate is mounted directly after the app is created', entry: functions[0] } : null;
   for (const entry of entries) {
     if (!exists(entry)) continue;
     const result = checkEntry(read(entry), shape);
