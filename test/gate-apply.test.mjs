@@ -85,16 +85,22 @@ test('applyGate refuses to overwrite a file that is not a qda gate', () => {
   assert.equal(writes.length, 0, 'nothing may be written before the user agrees');
 });
 
-test('applyGate overwrites a gate this skill wrote without force', () => {
+test('applyGate replaces an older or edited gate without force and keeps a copy', () => {
   const writes = [];
   const writer = (path, contents) => writes.push({ path, contents });
   const exists = (path) => /qda-gate\.js$/.test(path);
   const read = () => '// qda-gate: quick-dirty-auth\nconst old = true;';
   const plan = applyGate('node-server', '/app', writer, exists, { read });
-  assert.equal(writes.length, 1);
+  assert.equal(writes.length, 2);
   assert.deepEqual(plan.created, []);
   assert.deepEqual(plan.overwritten, ['qda-gate.js']);
   assert.deepEqual(plan.backups, []);
+  assert.deepEqual(plan.copies, ['qda-gate.js.qda-backup']);
+
+  const again = [];
+  const current = writes[1].contents;
+  applyGate('node-server', '/app', (path) => again.push(path), exists, { read: () => current });
+  assert.equal(again.length, 1, 'an unchanged gate needs no copy');
 });
 
 test('applyGate with force saves a backup next to the file before overwriting', () => {
@@ -129,7 +135,7 @@ test('teardownGate deletes only files the skill created', () => {
   });
   assert.deepEqual(removed, ['/app/middleware.ts']);
   assert.deepEqual(result.restored, []);
-  assert.deepEqual(saved[0].resources, []);
+  assert.deepEqual(saved[0].resources, [{ kind: 'dns', id: 'rec1' }]);
 });
 
 test('teardownGate restores a backup and leaves the backup file removed', () => {

@@ -1,5 +1,5 @@
 // qda-gate: quick-dirty-auth
-// templates/express-gate.js → copied into a Node/Express project; mount before routes:
+// templates/express-gate.js → copied into a Node/Express project; mount directly after the app is created:
 //   const gate = require('./qda-gate'); app.use(gate);
 const COOKIE = 'qda_auth';
 const LOCKED_TEXT = 'Locked: the site owner has not finished setting up the sign-in.';

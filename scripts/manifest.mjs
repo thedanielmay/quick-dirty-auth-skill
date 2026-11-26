@@ -1,4 +1,5 @@
-const SECRET_KEYS = new Set(['password', 'credential']);
+// Any field named for a password or credential, except the flag that one is set.
+const isSecret = (key) => /password|credential/i.test(key) && key !== 'passwordSet';
 
 // A password never reaches disk. Keep only the flag that says one is set.
 function stripSecrets(value) {
@@ -6,7 +7,7 @@ function stripSecrets(value) {
   if (value && typeof value === 'object') {
     const out = {};
     for (const [key, val] of Object.entries(value)) {
-      if (SECRET_KEYS.has(key.toLowerCase())) continue;
+      if (isSecret(key)) continue;
       out[key] = stripSecrets(val);
     }
     return out;
@@ -54,9 +55,9 @@ export function loadManifest(root) {
   refuseLink(root, p);
   if (!existsSync(p)) return null;
   const raw = JSON.parse(readFileSync(p, 'utf8'));
-  const hadPassword = Object.keys(raw).some((key) => SECRET_KEYS.has(key.toLowerCase()));
-  const cleaned = { ...stripSecrets(raw), passwordSet: Boolean(raw.passwordSet || hadPassword) };
-  if (hadPassword) saveManifest(root, cleaned);
+  const secrets = Object.entries(raw).filter(([key]) => isSecret(key));
+  const cleaned = { ...stripSecrets(raw), passwordSet: Boolean(raw.passwordSet || secrets.some(([, value]) => value)) };
+  if (secrets.length) saveManifest(root, cleaned);
   return cleaned;
 }
 export function saveManifest(root, manifest) {

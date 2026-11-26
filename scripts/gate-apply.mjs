@@ -1,9 +1,11 @@
-import { readFileSync, writeFileSync, existsSync, unlinkSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, unlinkSync, readdirSync, realpathSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve, relative, isAbsolute, sep } from 'node:path';
 import { loadManifest, saveManifest, emptyManifest, addResource, refuseLink } from './manifest.mjs';
 
 const MARKER = 'qda-gate: quick-dirty-auth';
+// Found in the package.json this skill adds to a static project.
+const STATIC_PACKAGE = '"qda-static-app"';
 const here = dirname(fileURLToPath(import.meta.url));
 const readTemplate = (name) => readFileSync(join(here, '..', 'templates', name), 'utf8');
 
@@ -16,8 +18,11 @@ const MAP = {
   'node-server': { template: 'express-gate.js',   dest: 'qda-gate.js',
                    mountInstruction: "Add on the lines directly after the app is created, before anything else: const gate = require('./qda-gate'); app.use(gate);" },
   fastify:       { template: 'fastify-gate.js',   dest: 'qda-gate.js',
-                   mountInstruction: "Add near the top of your server, before routes: const gate = require('./qda-gate'); app.addHook('onRequest', gate);" },
+                   mountInstruction: "Add on the lines directly after the app is created, before anything else: const gate = require('./qda-gate'); app.addHook('onRequest', gate);" },
 };
+
+// The only files this skill writes, so the only files teardown can touch.
+const GATE_FILES = new Set(Object.values(MAP).flatMap((p) => [p.dest, ...(p.ensureFiles ?? []).map((f) => f.dest)]));
 
 export function planGate(shape) {
   if (shape === 'unknown') throw new Error('Cannot apply gate to unknown shape; disambiguate first.');
@@ -35,7 +40,9 @@ export function applyGate(shape, targetRoot, writer = writeFileSync, exists = ex
   const plan = planGate(shape);
   const created = [];
   const overwritten = [];
-  const backups = [];
+  const backups = []; // a user file, restored at teardown
+  const copies = [];  // an older or edited gate, kept for the user
+  const template = readTemplate(plan.template);
 
   const destPath = join(targetRoot, plan.dest);
   // Check every fixed path before the first write.
@@ -50,20 +57,20 @@ export function applyGate(shape, targetRoot, writer = writeFileSync, exists = ex
         'Ask the user, then re-run with --force to save a backup first.',
       );
     }
-    if (!isQdaGate(previous)) {
+    if (previous !== template) {
       let suffix = '';
       let n = 0;
       while (exists(`${destPath}.qda-backup${suffix}`)) suffix = `.${++n}`;
       const backup = `${plan.dest}.qda-backup${suffix}`;
       refuseLink(targetRoot, join(targetRoot, backup));
       writer(`${destPath}.qda-backup${suffix}`, previous);
-      backups.push(backup);
+      (isQdaGate(previous) ? copies : backups).push(backup);
     }
     overwritten.push(plan.dest);
   } else {
     created.push(plan.dest);
   }
-  writer(destPath, readTemplate(plan.template));
+  writer(destPath, template);
 
   const ensuredWritten = [];
   for (const f of plan.ensureFiles ?? []) {
@@ -73,7 +80,7 @@ export function applyGate(shape, targetRoot, writer = writeFileSync, exists = ex
       ensuredWritten.push(f.dest);
     }
   }
-  return { ...plan, created, overwritten, backups, ensuredWritten };
+  return { ...plan, created, overwritten, backups, copies, ensuredWritten };
 }
 
 function projectPath(root, name, action) {
@@ -87,6 +94,23 @@ function projectPath(root, name, action) {
   return target;
 }
 
+// The record file sits in the project, so every record is checked before use.
+function checkRecord(root, { path, backup }) {
+  projectPath(root, path, 'remove');
+  if (backup) projectPath(root, backup, 'restore');
+  if (!GATE_FILES.has(path)) throw new Error(`Refusing to touch ${path}: this skill does not write that file`);
+  const prefix = `${path}.qda-backup`;
+  if (backup && !(backup.startsWith(prefix) && /^(\.\d+)?$/.test(backup.slice(prefix.length)))) {
+    throw new Error(`Refusing to restore from ${backup}: it is not a backup of ${path}`);
+  }
+}
+
+// True while the file is still the one this skill wrote.
+function stillOurs(content, { path, exactContent }) {
+  const marked = path === 'package.json' ? content.includes(STATIC_PACKAGE) : isQdaGate(content);
+  return marked && (exactContent === undefined || content === exactContent);
+}
+
 export function teardownGate(root, manifest, io = {}) {
   const { remove = unlinkSync,
           exists = existsSync,
@@ -95,34 +119,49 @@ export function teardownGate(root, manifest, io = {}) {
           saveManifest: persist = (m) => saveManifest(root, m) } = io;
   const resources = manifest?.resources ?? [];
   const files = resources.filter((r) => r.kind === 'file');
-  for (const resource of files) {
-    projectPath(root, resource.path, 'remove');
-    if (resource.backup) projectPath(root, resource.backup, 'restore');
-  }
+  for (const resource of files) checkRecord(root, resource);
+  // Other records, such as Cloudflare ids, are not undone here, so they stay.
+  const remaining = resources.filter((r) => r.kind !== 'file');
   const removed = [];
   const restored = [];
+  const kept = [];
   for (const resource of files) {
     const target = projectPath(root, resource.path, 'remove');
+    const present = exists(target);
+    const ours = present && stillOurs(read(target), resource);
     if (resource.backup) {
       const backup = projectPath(root, resource.backup, 'restore');
-      if (exists(backup)) {
+      if (exists(backup) && (!present || ours)) {
         write(target, read(backup));
         remove(backup);
         restored.push(resource.path);
+      } else if (present) {
+        kept.push(resource.path);
+        remaining.push(resource);
       }
-    } else if (resource.created && exists(target)) {
-      const content = read(target);
-      const stillOurs = resource.exactContent !== undefined
-        ? content === resource.exactContent
-        : isQdaGate(content);
-      if (stillOurs) {
+    } else if (resource.created && present) {
+      if (ours) {
         remove(target);
         removed.push(resource.path);
+      } else {
+        kept.push(resource.path);
       }
     }
   }
-  if (manifest) persist({ ...manifest, resources: [] });
-  return { removed, restored };
+  if (manifest) persist({ ...manifest, resources: remaining });
+  return { removed, restored, kept };
+}
+
+// One record per file. A later apply updates it.
+function upsertFile(manifest, path, fields) {
+  const at = manifest.resources.findIndex((r) => r.kind === 'file' && r.path === path);
+  if (at === -1) {
+    return addResource(manifest, { kind: 'file', path, ...(fields.backup ? {} : { created: true }), ...fields });
+  }
+  const resources = [...manifest.resources];
+  resources[at] = { ...resources[at], ...fields };
+  if (fields.backup) delete resources[at].created;
+  return { ...manifest, resources };
 }
 
 // A slash starts a regular expression when no value comes before it.
@@ -201,7 +240,8 @@ function checkEntry(source, shape) {
   // Another server in the same file can answer requests without the gate.
   const servers = [...bare.matchAll(/(?<![\w$])createServer\s*\(([^)]*)\)/g)];
   const usesApp = new RegExp(`(?:^|,)\\s*${app}(?:\\.server)?\\s*$`);
-  if (servers.some((m) => !usesApp.test(m[1])) || /\bnew\s+(?:Koa|Hono|Elysia)\b/.test(bare)) {
+  if (servers.some((m) => !usesApp.test(m[1])) || /\bnew\s+(?:Koa|Hono|Elysia)\b/.test(bare)
+      || /(?<![\w$])https?\s*\.\s*Server\s*\(/.test(bare)) {
     return fail('another server is created in this file, so the check cannot confirm the gate');
   }
   const end = closeParen(bare, call.index + call[0].length - 1);
@@ -225,14 +265,32 @@ function checkEntry(source, shape) {
   return { mounted: true, reason: 'the gate is mounted directly after the app is created' };
 }
 
+// A file under api/ that only hands on the app adds no unguarded route.
+const RE_EXPORT = /^\s*(?:module\.exports\s*=\s*require\s*\([^)]*\)|export\s*\{\s*default\s*\}\s*from\s*['"][^'"]+['"])\s*;?\s*$/;
+
+const listFiles = (folder) => {
+  try { return readdirSync(folder, { recursive: true }).map(String); } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return [];
+    throw error;
+  }
+};
+
 export function verifyMounted(root, shape, io = {}) {
+  const { exists = (p) => existsSync(join(root, p)),
+          read = (p) => readFileSync(join(root, p), 'utf8'),
+          list = (p) => listFiles(join(root, p)) } = io;
+  if (shape === 'next' && (exists('src/app') || exists('src/pages'))
+      && !(exists('src/middleware.ts') && isQdaGate(read('src/middleware.ts')))) {
+    return { mounted: false, reason: 'this project keeps its pages in src/, so the gate file must be src/middleware.ts', entry: null };
+  }
   if (shape === 'next' || shape === 'static') {
     return { mounted: true, reason: 'the framework loads middleware.ts automatically', entry: null };
   }
-  const { exists = (p) => existsSync(join(root, p)),
-          read = (p) => readFileSync(join(root, p), 'utf8') } = io;
   const readJson = io.readJson ?? ((p) => { try { return JSON.parse(read(p)); } catch { return null; } });
   const pkg = exists('package.json') ? readJson('package.json') : null;
+  if (pkg?.type === 'module') {
+    return { mounted: false, reason: 'package.json declares ES modules, and qda-gate.js cannot load there', entry: null };
+  }
   const started = /(?<![\w-])(?:node|nodemon|tsx|ts-node)\s+(?:--?[\w-]+(?:=\S+)?\s+)*([\w./-]+\.[cm]?[jt]s)\b/
     .exec(pkg?.scripts?.start ?? '')?.[1];
   const named = ['server', 'index', 'app'].flatMap((n) => ['js', 'mjs', 'cjs', 'ts'].map((x) => `${n}.${x}`));
@@ -240,6 +298,11 @@ export function verifyMounted(root, shape, io = {}) {
     ...[pkg?.main, started].filter((f) => typeof f === 'string').map((f) => f.replace(/^\.\//, '')),
     ...named, ...named.map((f) => `src/${f}`), 'api/index.js', 'api/index.ts',
   ])];
+
+  // Vercel runs each file under api/ as its own function.
+  const open = list('api').filter((f) => /\.[cm]?[jt]s$/.test(f) && !/\.d\.ts$/.test(f)).map((f) => `api/${f}`)
+    .find((f) => { const code = maskSource(read(f)).code; return !RE_EXPORT.test(code) && !checkEntry(read(f), shape)?.mounted; });
+  if (open) return { mounted: false, reason: `${open} can answer without the gate`, entry: open };
 
   // Every candidate file that creates an app must pass, and at least one must exist.
   let passed = null;
@@ -265,6 +328,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
   } else if (command === 'teardown') {
     const result = teardownGate(args[1], loadManifest(args[1]));
     console.log(`removed: ${result.removed.join(', ') || 'none'}; restored: ${result.restored.join(', ') || 'none'}`);
+    if (result.kept.length) console.log(`kept, because it changed or has no backup: ${result.kept.join(', ')}`);
   } else {
     const shape = command === 'apply' ? args[1] : command;
     const root = command === 'apply' ? args[2] : args[1];
@@ -272,26 +336,25 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
       console.error('usage: node gate-apply.mjs <apply <shape> <root> [--force]|verify <shape> <root>|teardown <root>>');
       process.exitCode = 1;
     } else {
-      const plan = applyGate(shape, root, writeFileSync, existsSync, { force });
+      // Read the record file first, so a damaged one stops the run before any write.
       let manifest = loadManifest(root) ?? emptyManifest();
-      for (const path of plan.created) manifest = addResource(manifest, { kind: 'file', path, created: true });
+      const plan = applyGate(shape, root, writeFileSync, existsSync, { force });
+      const gate = readTemplate(plan.template);
+      for (const path of plan.created) manifest = upsertFile(manifest, path, { exactContent: gate });
       for (const path of plan.ensuredWritten) {
         const template = plan.ensureFiles.find((f) => f.dest === path)?.template;
-        manifest = addResource(manifest, {
-          kind: 'file', path, created: true, exactContent: readTemplate(template),
-        });
+        manifest = upsertFile(manifest, path, { exactContent: readTemplate(template) });
       }
       for (const path of plan.overwritten) {
-        // An overwritten gate this skill wrote is already recorded. Only a
-        // backed-up user file needs a new record so teardown can restore it.
         const backup = plan.backups.find((b) => b.startsWith(`${path}.qda-backup`));
-        if (backup) manifest = addResource(manifest, { kind: 'file', path, backup });
+        manifest = upsertFile(manifest, path, { exactContent: gate, ...(backup ? { backup } : {}) });
       }
       saveManifest(root, manifest);
       console.log(`applied ${plan.template} -> ${plan.dest}`);
       if (plan.backups.length) console.log(`backups: ${plan.backups.join(', ')}`);
+      if (plan.copies.length) console.log(`kept a copy of the earlier gate: ${plan.copies.join(', ')}`);
       if (plan.mountInstruction) console.log(plan.mountInstruction);
-      if (shape === 'node-server' || shape === 'fastify') {
+      if (shape !== 'static') {
         const result = verifyMounted(root, shape);
         console.log(`mounted: ${result.mounted} (${result.reason})`);
         if (!result.mounted) process.exitCode = 1;

@@ -1,5 +1,5 @@
 // qda-gate: quick-dirty-auth
-// templates/fastify-gate.js → copied into a Fastify project; register before routes:
+// templates/fastify-gate.js → copied into a Fastify project; register directly after the app is created:
 //   const gate = require('./qda-gate'); app.addHook('onRequest', gate);
 const COOKIE = 'qda_auth';
 const LOCKED_TEXT = 'Locked: the site owner has not finished setting up the sign-in.';

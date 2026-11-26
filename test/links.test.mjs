@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyGate, teardownGate } from '../scripts/gate-apply.mjs';
-import { saveManifest, ensureIgnoreEntries, emptyManifest } from '../scripts/manifest.mjs';
+import { saveManifest, ensureIgnoreEntries, emptyManifest, refuseLink } from '../scripts/manifest.mjs';
 
 const TMP = await mkdtemp(join(tmpdir(), 'qda-links-'));
 after(() => rm(TMP, { recursive: true, force: true }));
@@ -41,14 +41,14 @@ test('applyGate refuses a dangling link at the backup name', async () => {
 
 test('teardownGate refuses a linked target or a linked folder, and changes nothing', async () => {
   const { base, root, outside } = await project();
-  await writeFile(join(root, 'saved'), 'restored text');
+  const backup = 'qda-gate.js.qda-backup';
+  await writeFile(join(root, backup), 'restored text');
   await symlink(outside, join(root, 'qda-gate.js'));
   await symlink(base, join(root, 'folder'));
-  for (const path of ['qda-gate.js', 'folder/outside.txt']) {
-    assert.throws(() => teardownGate(root, { resources: [{ kind: 'file', path, backup: 'saved' }] }), /Refusing to use/, path);
-  }
+  assert.throws(() => teardownGate(root, { resources: [{ kind: 'file', path: 'qda-gate.js', backup }] }), /symbolic link/);
+  assert.throws(() => refuseLink(root, join(root, 'folder', 'outside.txt')), /outside the project root/);
   assert.equal(await readFile(outside, 'utf8'), 'keep');
-  assert.equal(existsSync(join(root, 'saved')), true);
+  assert.equal(existsSync(join(root, backup)), true);
 });
 
 test('the record file and ignore files are not written through a link', async () => {

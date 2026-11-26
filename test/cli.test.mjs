@@ -102,7 +102,8 @@ test('teardown leaves a package.json the user changed after the static gate was 
     writeFileSync(join(dir, 'package.json'), '{"name":"my-app"}');
     const result = run('gate-apply.mjs', 'teardown', dir);
     assert.match(result, /removed: middleware\.ts/);
-    assert.doesNotMatch(result, /package\.json/);
+    assert.doesNotMatch(result.split('\n')[0], /package\.json/);
+    assert.match(result, /kept[^\n]*package\.json/);
     assert.equal(existsSync(join(dir, 'package.json')), true);
   } finally {
     rmSync(dir, { recursive: true, force: true });

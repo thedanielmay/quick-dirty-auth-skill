@@ -2,17 +2,18 @@
 
 ## 1.1.0 - 2026-11-26
 
-- The password is never written to `.qda.json`. The manifest records only that a password is set, and removes any password field on read.
+- The password is never written to `.qda.json`. The manifest keeps a flag that a password is set, and removes any password field on read.
 - `.qda.json` is added to the project `.gitignore` and `.vercelignore`, without duplicate lines.
-- An existing gate file is never overwritten silently. With agreement, `--force` saves a backup next to the file. Teardown deletes only files this skill created and restores backups.
+- A user file is overwritten only with `--force`, which saves a backup. A changed or older gate is copied before it is replaced. Teardown deletes only unchanged files this skill created, restores backups, keeps other records, and refuses records for other files.
 - Fastify apps get a dependency-free gate using an `onRequest` hook, with the same headers as the Express gate.
-- Deploy stops when the server entry does not load and mount the gate before routes.
+- Deploy stops when the server entry does not load and mount the gate before routes, when a file under `api/` can answer alone, or when a Next.js `src/` project has no `src/middleware.ts` gate.
 - Static signals outrank a stray server file. Conflicting static and server signals report `unknown`.
 - Every gate reads `GATE_PASSWORD` when it handles a request. No health path is exempt.
-- The scripts print results from the command line. Requires Node 22.18 or newer.
+- The detect, probe, record, password and gate scripts print results from the command line. Requires Node 22.18 or newer.
 - The Express and Fastify gates limit the size of a sign-in request.
 - After sign-in, the Express and Fastify gates redirect only within the same site.
 - The scripts refuse a symbolic link and a folder outside the project.
+- The static gate covers every path. The Next.js gate covers every path except built assets and image resizing.
 
 ## 1.0.4 - 2026-11-26
 

@@ -41,7 +41,7 @@ const locked = () => new Response(
   },
 );
 
-export const config = { matcher: '/((?!favicon.ico).*)' };
+export const config = { matcher: '/:path*' };
 
 export default function middleware(req: Request) {
   // Read on each request so a password set after load still unlocks the site.
