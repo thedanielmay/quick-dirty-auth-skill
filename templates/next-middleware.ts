@@ -1,8 +1,8 @@
+// qda-gate: quick-dirty-auth
 // templates/next-middleware.ts  → copied to target project root as middleware.ts
 import { NextRequest, NextResponse } from 'next/server';
 
 const COOKIE = 'qda_auth';
-const PASSWORD = process.env.GATE_PASSWORD ?? '';
 
 const page = (error = '') => new NextResponse(
   `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
@@ -30,6 +30,8 @@ const locked = () => new NextResponse(
 );
 
 export async function middleware(req: NextRequest) {
+  // Read on each request so a password set after load still unlocks the site.
+  const PASSWORD = process.env.GATE_PASSWORD ?? '';
   if (!PASSWORD.trim()) return locked(); // no password set yet → hold the site locked until setup is finished
   if (req.cookies.get(COOKIE)?.value === PASSWORD) return NextResponse.next();
 
@@ -45,4 +47,4 @@ export async function middleware(req: NextRequest) {
   return page();
 }
 
-export const config = { matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'] };
+export const config = { matcher: ['/((?!_next/static/|_next/image).*)'] };

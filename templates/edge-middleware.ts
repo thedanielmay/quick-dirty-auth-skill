@@ -1,12 +1,12 @@
+// qda-gate: quick-dirty-auth
 // templates/edge-middleware.ts → copied to a static project root as middleware.ts
 // Vercel Edge Middleware for static sites. Dependency-free: no @vercel/edge import
-// (bare static projects don't have it installed, and importing it 500s the runtime).
-// Edge middleware can't reliably read a POST body for static sites, so the password
+// (bare static projects do not have it installed, and importing it 500s the runtime).
+// Edge middleware cannot reliably read a POST body for static sites, so the password
 // is captured client-side: the form's inline JS sets the qda_auth cookie and reloads.
 // The cookie is then verified SERVER-SIDE here against GATE_PASSWORD — content is never
 // served without the correct cookie. Requires JavaScript in the browser (fine for previews).
 const COOKIE = 'qda_auth';
-const PASSWORD = process.env.GATE_PASSWORD ?? '';
 
 const page = () => new Response(
   `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
@@ -41,9 +41,11 @@ const locked = () => new Response(
   },
 );
 
-export const config = { matcher: '/((?!favicon.ico).*)' };
+export const config = { matcher: '/:path*' };
 
 export default function middleware(req: Request) {
+  // Read on each request so a password set after load still unlocks the site.
+  const PASSWORD = process.env.GATE_PASSWORD ?? '';
   if (!PASSWORD.trim()) return locked(); // no password set yet → hold the site locked until setup is finished
   const cookie = req.headers.get('cookie') ?? '';
   const want = `${COOKIE}=${encodeURIComponent(PASSWORD)}`;

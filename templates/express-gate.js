@@ -1,8 +1,12 @@
-// templates/express-gate.js → copied into a Node/Express project; mount before routes:
+// qda-gate: quick-dirty-auth
+// templates/express-gate.js → copied into a Node/Express project; mount directly after the app is created:
 //   const gate = require('./qda-gate'); app.use(gate);
 const COOKIE = 'qda_auth';
-const PASSWORD = process.env.GATE_PASSWORD || '';
 const LOCKED_TEXT = 'Locked: the site owner has not finished setting up the sign-in.';
+// A sign-in request holds one short field.
+const MAX_BODY = 4096;
+// Redirect inside this site only. "//host" and "/\\host" point at another site.
+const localPath = (url) => (/^\/(?![\/\\])[!-~]*$/.test(url ?? '') ? url : '/');
 
 const page = (error = '') =>
   `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
@@ -16,6 +20,8 @@ const page = (error = '') =>
   <button>Enter</button></form>`;
 
 module.exports = function qdaGate(req, res, next) {
+  // Read on each request so a password set after load still unlocks the site.
+  const PASSWORD = process.env.GATE_PASSWORD || '';
   if (!PASSWORD.trim()) {
     res.statusCode = 503;
     res.setHeader('x-qda-gate', 'locked');
@@ -35,12 +41,14 @@ module.exports = function qdaGate(req, res, next) {
 
   if (req.method === 'POST') {
     let body = '';
-    req.on('data', (c) => (body += c));
+    let size = 0;
+    req.on('data', (c) => { size += c.length; if (size <= MAX_BODY) body += c; });
     req.on('end', () => {
+      if (size > MAX_BODY) { res.statusCode = 413; res.setHeader('content-type', 'text/plain; charset=utf-8'); return res.end('Request too large'); }
       const params = new URLSearchParams(body);
       if (params.get('password') === PASSWORD) {
         res.setHeader('set-cookie', `${COOKIE}=${PASSWORD}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800`);
-        res.statusCode = 303; res.setHeader('location', req.url); return res.end();
+        res.statusCode = 303; res.setHeader('location', localPath(req.url)); return res.end();
       }
       res.statusCode = 401; res.setHeader('content-type', 'text/html'); res.setHeader('x-qda-gate', 'form'); res.end(page('Wrong password'));
     });

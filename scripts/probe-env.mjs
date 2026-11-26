@@ -7,7 +7,22 @@ export function recommendRoute({ cfTokenPresent = false, domainOnCloudflare = fa
 }
 
 import { execFileSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 export function probeVercelAuthed() {
   try { execFileSync('vercel', ['whoami'], { stdio: 'pipe' }); return true; }
   catch { return false; }
+}
+
+// CLI: node probe-env.mjs [--cf] [--domain-on-cf] [--vercel-authed]
+// Flags describe the environment; the CLI never calls an external tool.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
+  const flags = process.argv.slice(2);
+  const result = recommendRoute({
+    cfTokenPresent: flags.includes('--cf'),
+    domainOnCloudflare: flags.includes('--domain-on-cf'),
+    vercelAuthed: flags.includes('--vercel-authed'),
+  });
+  console.log(`${result.route}: ${result.reason}`);
+  console.log(`needsVercelLogin: ${result.needsVercelLogin}`);
 }
