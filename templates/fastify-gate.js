@@ -3,6 +3,10 @@
 //   const gate = require('./qda-gate'); app.addHook('onRequest', gate);
 const COOKIE = 'qda_auth';
 const LOCKED_TEXT = 'Locked: the site owner has not finished setting up the sign-in.';
+// A sign-in request holds one short field.
+const MAX_BODY = 4096;
+// Redirect inside this site only. "//host" and "/\\host" point at another site.
+const localPath = (url) => (/^\/(?![\/\\])[!-~]*$/.test(url ?? '') ? url : '/');
 
 const page = (error = '') =>
   `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
@@ -38,14 +42,20 @@ module.exports = function qdaGate(request, reply, done) {
   if (request.method === 'POST') {
     // onRequest runs before Fastify parses the body, so read the raw stream.
     let body = '';
+    let size = 0;
     const raw = request.raw ?? request;
-    raw.on('data', (c) => (body += c));
+    raw.on('data', (c) => { size += c.length; if (size <= MAX_BODY) body += c; });
     raw.on('end', () => {
+      if (size > MAX_BODY) {
+        reply.code(413);
+        reply.header('content-type', 'text/plain; charset=utf-8');
+        return reply.send('Request too large');
+      }
       const params = new URLSearchParams(body);
       if (params.get('password') === PASSWORD) {
         reply.code(303);
         reply.header('set-cookie', `${COOKIE}=${PASSWORD}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800`);
-        reply.header('location', request.url ?? '/');
+        reply.header('location', localPath(request.url));
         return reply.send();
       }
       reply.code(401);

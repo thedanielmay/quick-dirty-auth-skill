@@ -10,6 +10,9 @@
 - Static signals outrank a stray server file. Conflicting static and server signals report `unknown`.
 - Every gate reads `GATE_PASSWORD` when it handles a request. No health path is exempt.
 - The scripts print results from the command line. Requires Node 22.18 or newer.
+- The Express and Fastify gates limit the size of a sign-in request.
+- After sign-in, the Express and Fastify gates redirect only within the same site.
+- The scripts refuse a symbolic link and a folder outside the project.
 
 ## 1.0.4 - 2026-11-26
 

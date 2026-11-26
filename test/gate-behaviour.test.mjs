@@ -71,6 +71,7 @@ function normalize(r) {
     contentType: r.contentType ?? null,
     cacheControl: r.cacheControl ?? null,
     contentServed: !!r.contentServed,
+    location: r.location ?? null,
   };
 }
 
@@ -134,12 +135,13 @@ async function runExpress({ password, request, latePassword }) {
           contentType: headers['content-type'] ?? null,
           cacheControl: headers['cache-control'] ?? null,
           contentServed: nextCalled,
+          location: headers.location,
         }));
       },
     };
     const req = new EventEmitter();
     req.method = request.method || 'GET';
-    req.url = '/';
+    req.url = request.url ?? '/';
     req.headers = { cookie: request.cookie || '' };
     const body = request.bodyPassword ? 'password=' + encodeURIComponent(request.bodyPassword) : '';
     process.nextTick(() => {
@@ -169,13 +171,14 @@ async function runFastify({ password, request, latePassword }) {
           contentType: headers['content-type'] ?? null,
           cacheControl: headers['cache-control'] ?? null,
           contentServed: doneCalled,
+          location: headers.location,
         }));
         return this;
       },
     };
     const req = new EventEmitter();
     req.method = request.method || 'GET';
-    req.url = '/';
+    req.url = request.url ?? '/';
     req.headers = { cookie: request.cookie || '' };
     req.raw = req;
     const body = request.bodyPassword ? 'password=' + encodeURIComponent(request.bodyPassword) : '';
@@ -193,6 +196,24 @@ const runners = [
   ['express (gate)', runExpress],
   ['fastify (onRequest hook)', runFastify],
 ];
+
+for (const [name, run] of runners.filter(([n]) => /^(express|fastify)/.test(n))) {
+  test(`${name}: sign-in redirects stay on this site`, async () => {
+    const cases = [['/a/b?c=1', '/a/b?c=1'], ['//other.example', '/'], ['/\\other.example', '/'],
+      ['/\t/other.example', '/'], ['https://other.example', '/'], ['', '/']];
+    for (const [url, expected] of cases) {
+      const r = await run({ password: 'pw', request: { method: 'POST', url, bodyPassword: 'pw' } });
+      assert.equal(r.status, 303, url);
+      assert.equal(r.location, expected, url);
+    }
+  });
+
+  test(`${name}: an oversized sign-in request is refused`, async () => {
+    const r = await run({ password: 'pw', request: { method: 'POST', bodyPassword: 'x'.repeat(5000) } });
+    assert.equal(r.status, 413);
+    assert.equal(r.contentServed, false);
+  });
+}
 
 for (const [name, run] of runners) {
   test(`${name}: unset, empty and blank password lock GET`, async () => {

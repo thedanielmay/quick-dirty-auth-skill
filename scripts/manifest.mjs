@@ -29,11 +29,29 @@ export function markPasswordSet(manifest) {
   return { ...stripSecrets(manifest), passwordSet: true };
 }
 
-import { readFileSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, lstatSync, realpathSync } from 'node:fs';
+import { dirname, join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
+const ifPresent = (read) => {
+  try { return read(); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+};
+
+// A symbolic link can send a read or a write to a file outside the project.
+export function refuseLink(root, path) {
+  const name = relative(root, path);
+  if (ifPresent(() => lstatSync(path))?.isSymbolicLink()) {
+    throw new Error(`Refusing to use ${name}: it is a symbolic link`);
+  }
+  const base = ifPresent(() => realpathSync(root));
+  const folder = ifPresent(() => realpathSync(dirname(path)));
+  if (base && folder && (relative(base, folder) === '..' || relative(base, folder).startsWith(`..${sep}`))) {
+    throw new Error(`Refusing to use ${name}: its folder is outside the project root`);
+  }
+}
+
 export function loadManifest(root) {
   const p = join(root, '.qda.json');
+  refuseLink(root, p);
   if (!existsSync(p)) return null;
   const raw = JSON.parse(readFileSync(p, 'utf8'));
   const hadPassword = Object.keys(raw).some((key) => SECRET_KEYS.has(key.toLowerCase()));
@@ -42,13 +60,16 @@ export function loadManifest(root) {
   return cleaned;
 }
 export function saveManifest(root, manifest) {
+  refuseLink(root, join(root, '.qda.json'));
   writeFileSync(join(root, '.qda.json'), JSON.stringify(stripSecrets(manifest), null, 2) + '\n');
 }
 
 export function ensureIgnoreEntries(root, io = {}) {
   const { exists = existsSync, read = readFileSync, write = writeFileSync } = io;
   const added = [];
-  for (const name of ['.gitignore', '.vercelignore']) {
+  const names = ['.gitignore', '.vercelignore'];
+  for (const name of names) refuseLink(root, join(root, name));
+  for (const name of names) {
     const path = join(root, name);
     const current = exists(path) ? read(path, 'utf8') : '';
     if (current.split(/\r?\n/).some((line) => line.trim() === '.qda.json')) continue;

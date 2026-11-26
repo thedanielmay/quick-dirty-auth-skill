@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync, realpathSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve, relative, isAbsolute, sep } from 'node:path';
-import { loadManifest, saveManifest, emptyManifest, addResource } from './manifest.mjs';
+import { loadManifest, saveManifest, emptyManifest, addResource, refuseLink } from './manifest.mjs';
 
 const MARKER = 'qda-gate: quick-dirty-auth';
 const here = dirname(fileURLToPath(import.meta.url));
@@ -38,6 +38,10 @@ export function applyGate(shape, targetRoot, writer = writeFileSync, exists = ex
   const backups = [];
 
   const destPath = join(targetRoot, plan.dest);
+  // Check every fixed path before the first write.
+  for (const name of [plan.dest, '.qda.json', ...(plan.ensureFiles ?? []).map((f) => f.dest)]) {
+    refuseLink(targetRoot, join(targetRoot, name));
+  }
   if (exists(destPath)) {
     const previous = read(destPath);
     if (!isQdaGate(previous) && !force) {
@@ -51,6 +55,7 @@ export function applyGate(shape, targetRoot, writer = writeFileSync, exists = ex
       let n = 0;
       while (exists(`${destPath}.qda-backup${suffix}`)) suffix = `.${++n}`;
       const backup = `${plan.dest}.qda-backup${suffix}`;
+      refuseLink(targetRoot, join(targetRoot, backup));
       writer(`${destPath}.qda-backup${suffix}`, previous);
       backups.push(backup);
     }
@@ -78,6 +83,7 @@ function projectPath(root, name, action) {
   if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw new Error(`Refusing to ${action} ${name}: path resolves outside the project root`);
   }
+  refuseLink(base, target);
   return target;
 }
 
