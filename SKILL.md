@@ -3,7 +3,7 @@ name: quick-dirty-auth
 description: 'Use when the user wants to put a local app on the public web behind a sign-in gate quickly: "deploy this with a password", "put auth on this and ship it", "expose this app but lock it down", "quick dirty auth". Detects the app shape (Next.js, Node server, Fastify, or static), applies a server-enforced gate (shared password by default; Cloudflare Access JWT check when the domain is already on Cloudflare), deploys to Vercel, and reports a live URL. Optimizes for hands-off operation. Also handles teardown.'
 license: MIT
 metadata:
-  version: "1.3.0"
+  version: "1.3.1"
 ---
 
 # quick-dirty-auth
@@ -35,7 +35,7 @@ Run them from the **skill directory**, passing the target project path. They are
      - Generate a password (`password.mjs`). Copy the gate template (`gate-apply.mjs`). For `node-server`, use `app.use(gate)`. For `fastify`, use `app.addHook('onRequest', gate)`. Show the user the mount instruction.
      - Verify the mount with `gate-apply.mjs verify <shape> <project>` before any deploy. The check passes only when the line that mounts the gate comes directly after the line that creates the app (only the line that loads `./qda-gate` can sit between them), so the gate runs before routes and everything else. The first `apply` on a server reports `mounted: false`, because the mount line is not there yet. In a Next.js project with pages only in `src/` (no root `app/` or `pages/`), `apply` writes `src/middleware.ts`. A file under `api/` passes only when it mounts the gate, or does nothing but export a file that mounts it. A project with `"type": "module"` cannot load `qda-gate.js`, so the check fails there: do not deploy it. If it fails, move the gate line there, with the user's yes, and run the check again. Do not deploy while it fails. The check is a helper that reads the usual entry files. It is not proof. Also read the server code yourself, and tell the user about any route or server that can answer without the gate. If a second file creates the running app and the check did not read it, do not rely on a pass.
      - `verify` also refuses these. Fix each one only with the user's yes, then run `verify` again.
-       - A `node-server` project with a file in `public/` (`.DS_Store` and `.gitkeep` do not count). Serve those files through the app from another folder, after the gate.
+       - A `node-server` project with a file in `public/` (`.DS_Store` and an empty `.gitkeep` do not count). Serve those files through the app from another folder, after the gate.
        - A `.py`, `.go` or `.rb` file under `api/` on `node-server` or `fastify`. Remove it, or move it out of the project.
        - An app without the gate in a file that the start script or `main` names, with or without an extension, or in an `.mts` or `.cts` entry file. These extra files never give a pass. They can only cause a refusal or stop the check with an error.
      - Never overwrite a file silently. If a destination exists and is not a gate this skill wrote, stop with a clear message and show the file. A `--force` option exists only after the user agrees. It saves a backup copy next to the file. A gate that differs from the current one is replaced, and a copy of it is kept next to the file.

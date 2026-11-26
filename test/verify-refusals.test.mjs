@@ -64,6 +64,17 @@ test('placeholder files in public/ do not block', () => {
   assert.equal(result.mounted, true, result.reason);
 });
 
+test('a .gitkeep file with content in public/ is refused', () => {
+  const result = verify('node-server', { 'server.js': gated, 'public/img/.gitkeep': 'private notes' });
+  assert.equal(result.mounted, false);
+  assert.match(result.reason, /public\//);
+});
+
+test('a .gitkeep file that holds only a line break does not block', () => {
+  const result = verify('node-server', { 'server.js': gated, 'public/.gitkeep': '\n' });
+  assert.equal(result.mounted, true, result.reason);
+});
+
 test('an api file with an upper case ending is refused', () => {
   assert.equal(verify('node-server', { 'server.js': gated, 'api/report.PY': 'x' }).mounted, false);
 });
