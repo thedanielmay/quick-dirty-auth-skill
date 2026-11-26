@@ -59,6 +59,15 @@ for (const name of ['api/report.py', 'api/report.go', 'api/deep/report.rb']) {
   }
 }
 
+test('placeholder files in public/ do not block', () => {
+  const result = verify('node-server', { 'server.js': gated, 'public/.DS_Store': 'x', 'public/img/.gitkeep': '' });
+  assert.equal(result.mounted, true, result.reason);
+});
+
+test('an api file with an upper case ending is refused', () => {
+  assert.equal(verify('node-server', { 'server.js': gated, 'api/report.PY': 'x' }).mounted, false);
+});
+
 test('a data file under api/ does not block', () => {
   const result = verify('node-server', { 'server.js': gated, 'api/data.json': '{}' });
   assert.equal(result.mounted, true, result.reason);
@@ -72,12 +81,36 @@ test('a start script that names a file with no extension is checked', () => {
   assert.equal(result.entry, 'lib/real.js');
 });
 
-test('a start script with no extension can name a gated file', () => {
+test('a gated file named without an extension does not block a gated server.js', () => {
   const result = verify('node-server', {
-    'package.json': '{"scripts":{"start":"node --enable-source-maps boot"}}', 'boot.js': gated,
+    'package.json': '{"scripts":{"start":"node --enable-source-maps boot"}}', 'boot.js': gated, 'server.js': gated,
   });
   assert.equal(result.mounted, true, result.reason);
 });
+
+// The extra start file checks only refuse. A pass needs one of the usual entry files.
+test('a file named without an extension does not give a pass on its own', () => {
+  const result = verify('node-server', { 'package.json': '{"scripts":{"start":"node boot"}}', 'boot.js': gated });
+  assert.equal(result.mounted, false);
+});
+
+for (const [start, files, entry] of [
+  ['node boot', { boot: ungated, 'boot.js': gated }, 'boot'],
+  ['node lib', { 'lib/package.json': '{"main":"real.js"}', 'lib/real.js': ungated, 'lib/index.js': gated }, 'lib/real.js'],
+  ['node migrate.js && node real', { 'migrate.js': '1;', 'real.js': ungated }, 'real.js'],
+  ['node -r dotenv/config real', { 'real.js': ungated }, 'real.js'],
+  ['node "real"', { 'real.js': ungated }, 'real.js'],
+  ['tsx watch real', { 'real.ts': ungated }, 'real.ts'],
+  ['pm2 start lib/real.js', { 'lib/real.js': ungated }, 'lib/real.js'],
+  ['node .', { 'boot.js': ungated }, 'boot.js'],
+]) {
+  test(`an ungated file behind "${start}" is refused`, () => {
+    const pkg = { scripts: { start }, ...(start === 'node .' ? { main: 'boot' } : {}) };
+    const result = verify('node-server', { 'package.json': JSON.stringify(pkg), 'server.js': gated, ...files });
+    assert.equal(result.mounted, false);
+    assert.equal(result.entry, entry);
+  });
+}
 
 for (const name of ['app.mts', 'index.cts', 'src/server.mts']) {
   test(`an ungated ${name} beside a gated server.js is refused`, () => {

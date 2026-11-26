@@ -318,6 +318,34 @@ const listFiles = (folder) => {
   }
 };
 
+// Other files the app can start from: every word of the start script and of
+// "main", with the usual endings, plus .mts and .cts entry files. A folder's own
+// "main" counts too. These files can only cause a refusal. They never give a pass.
+function otherStarts(pkg, readJson) {
+  const words = [pkg?.main, ...String(pkg?.scripts?.start ?? '').split(/[\s;&|()=<>]+/)]
+    .filter((w) => typeof w === 'string')
+    .map((w) => w.replace(/["']/g, ''))
+    .filter((w) => w && !w.startsWith('-'));
+  const folderMains = words.flatMap((w) => {
+    const main = readJson(posix.join(w, 'package.json'))?.main;
+    return typeof main === 'string' ? [posix.join(w, main)] : [];
+  });
+  const endings = ['js', 'mjs', 'cjs', 'ts', 'mts', 'cts'];
+  const guesses = [...words, ...folderMains].flatMap((w) =>
+    ['', ...endings.map((x) => `.${x}`), '/index.js'].map((end) => posix.normalize(`${w}${end}`)));
+  const typed = ['server', 'index', 'app'].flatMap((n) => [n, `src/${n}`])
+    .flatMap((n) => [`${n}.mts`, `${n}.cts`]);
+  return [...new Set([...guesses, ...typed])];
+}
+
+// The text of a file. A folder has no text. Any other read error stops the check.
+function readFile(path, read) {
+  try { return read(path); } catch (error) {
+    if (error.code === 'EISDIR') return '';
+    throw error;
+  }
+}
+
 export function verifyMounted(root, shape, io = {}) {
   const { exists = (p) => existsSync(join(root, p)),
           read = (p) => readFileSync(join(root, p), 'utf8'),
@@ -333,9 +361,10 @@ export function verifyMounted(root, shape, io = {}) {
   if (pkg?.type === 'module') {
     return { mounted: false, reason: 'package.json declares ES modules, and qda-gate.js cannot load there', entry: null };
   }
-  // An Express project keeps no files in public/, which a host can serve as static files.
+  // A host can serve public/ as static files, so an Express project keeps no files there.
   if (shape === 'node-server') {
     const served = list('public').some((f) => {
+      if (['.DS_Store', '.gitkeep'].includes(posix.basename(f))) return false;
       const path = `public/${f}`;
       if (!exists(path)) return false;
       try { read(path); return true; } catch (error) { return error.code !== 'EISDIR'; }
@@ -345,29 +374,16 @@ export function verifyMounted(root, shape, io = {}) {
     }
   }
   // Vercel runs each file under api/ as its own function, whatever its language.
-  const foreign = list('api').find((f) => /\.(?:py|go|rb)$/.test(f));
+  const foreign = list('api').find((f) => /\.(?:py|go|rb)$/i.test(f));
   if (foreign) {
     const entry = `api/${foreign}`;
     return { mounted: false, reason: `${entry} can answer without the gate`, entry };
   }
-  // Every word of the start script that can name a file: one with a script
-  // extension anywhere, and the first plain word after the command.
-  const start = String(pkg?.scripts?.start ?? '');
-  const runs = /(?<![\w-])(?:node|nodemon|tsx|ts-node)\s/.test(start);
-  const withExtension = runs ? start.match(/(?<![\w./-])[\w./-]+\.[cm]?[jt]s(?![\w./-])/g) ?? [] : [];
-  const plain = /(?<![\w-])(?:node|nodemon|tsx|ts-node)\s+(?:-[\w-]+(?:=\S+)?\s+)*([\w./-]+)/.exec(start)?.[1];
-  // A start script can name a file without its extension; check every file Node would load.
-  const scriptFiles = (f) => {
-    if (!f) return [];
-    const base = f.replace(/^\.\//, '');
-    if (/\.[cm]?[jt]s$/.test(base)) return [base];
-    return [...['js', 'mjs', 'cjs', 'ts', 'mts', 'cts'].map((x) => `${base}.${x}`), `${base}/index.js`];
-  };
-  const named = ['server', 'index', 'app']
-    .flatMap((n) => ['js', 'mjs', 'cjs', 'ts', 'mts', 'cts'].map((x) => `${n}.${x}`));
+  const started = /(?<![\w-])(?:node|nodemon|tsx|ts-node)\s+(?:--?[\w-]+(?:=\S+)?\s+)*([\w./-]+\.[cm]?[jt]s)\b/
+    .exec(pkg?.scripts?.start ?? '')?.[1];
+  const named = ['server', 'index', 'app'].flatMap((n) => ['js', 'mjs', 'cjs', 'ts'].map((x) => `${n}.${x}`));
   const entries = [...new Set([
-    ...(typeof pkg?.main === 'string' ? [pkg.main.replace(/^\.\//, '')] : []),
-    ...[...withExtension, plain].flatMap(scriptFiles),
+    ...[pkg?.main, started].filter((f) => typeof f === 'string').map((f) => f.replace(/^\.\//, '')),
     ...named, ...named.map((f) => `src/${f}`), 'api/index.js', 'api/index.ts',
   ])];
 
@@ -386,6 +402,11 @@ export function verifyMounted(root, shape, io = {}) {
     if (!result.mounted) return { ...result, entry };
     passed ??= { ...result, entry };
   }
+  for (const entry of otherStarts(pkg, readJson)) {
+    if (!exists(entry)) continue;
+    const result = checkEntry(readFile(entry, read), shape);
+    if (result && !result.mounted) return { ...result, entry };
+  }
   return passed ?? { mounted: false, reason: 'no server entry creates an app and mounts ./qda-gate', entry: null };
 }
 
@@ -397,12 +418,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
   if (command === 'verify') {
     const result = verifyMounted(args[2], args[1]);
     console.log(`mounted: ${result.mounted} (${result.reason})`);
+    if (!result.mounted && result.entry) console.log(`file: ${result.entry}`);
     if (!result.mounted) process.exitCode = 1;
   } else if (command === 'teardown') {
     const result = teardownGate(args[1], loadManifest(args[1]));
     console.log(`removed: ${result.removed.join(', ') || 'none'}; restored: ${result.restored.join(', ') || 'none'}`);
     if (result.kept.length) console.log(`kept, because it changed or has no backup: ${result.kept.join(', ')}`);
-    if (result.ignoreLines.length) console.log(`kept .qda.json lines in ${result.ignoreLines.join(', ')}: they stay in place`);
+    if (result.ignoreLines.length) console.log(`the .qda.json line stays in ${result.ignoreLines.join(', ')}`);
   } else {
     const shape = command === 'apply' ? args[1] : command;
     const root = command === 'apply' ? args[2] : args[1];

@@ -2,11 +2,11 @@
 
 ## 1.3.0 - 2026-11-26
 
-- `verify` refuses a `node-server` project with files in `public/`. Serve those files through the app from another folder after the gate.
-- `verify` refuses `.py`, `.go` and `.rb` files under `api/` on `node-server` and `fastify`, and names the file as the entry.
-- Every file with a script extension that the start script names is checked.
-- A start script without a file extension resolves to the files Node loads, including `lib/real/index.js`. `.mts` and `.cts` are checked as entry files and start scripts.
-- `teardownGate` reports the ignore files that still hold a `.qda.json` line, and teardown leaves those lines in place.
+- `verify` refuses a `node-server` project with files in `public/`. `.DS_Store` and `.gitkeep` do not count. Serve those files through the app from another folder after the gate.
+- `verify` refuses `.py`, `.go` and `.rb` files under `api/` on `node-server` and `fastify`.
+- `verify` also reads the files that the start script and `main` name, with or without an extension, and `.mts` and `.cts` entry files. An app without the gate in one of them is refused.
+- When one file causes a refusal, `verify` prints its name.
+- Teardown names the ignore files that still hold the `.qda.json` line, and leaves the line in place.
 
 ## 1.2.0 - 2026-11-26
 

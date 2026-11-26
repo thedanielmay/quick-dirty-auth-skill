@@ -71,6 +71,10 @@ test('release metadata is 1.3.0', () => {
   assert.match(skill, /^  version: "1\.3\.0"$/m);
 });
 
+test('the 1.3.0 changelog heading is first', () => {
+  assert.match(changelog.slice(changelog.indexOf('\n## ')), /^\n## 1\.3\.0 - 2026-11-26\n/);
+});
+
 test('the 1.2.0 changelog section describes new behaviour only', () => {
   assert.match(changelog, /^## 1\.2\.0 - 2026-11-26$/m);
   const section = changelog.split('## 1.2.0 - 2026-11-26')[1].split('\n## ')[0];
