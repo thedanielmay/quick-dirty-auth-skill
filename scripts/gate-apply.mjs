@@ -155,8 +155,18 @@ export function teardownGate(root, manifest, io = {}) {
       }
     }
   }
+  // Report the ignore files that still list the record file; teardown leaves them alone.
+  const ignoreLines = ['.gitignore', '.vercelignore'].filter((name) => {
+    const path = join(root, name);
+    if (!exists(path)) return false;
+    try {
+      return String(read(path)).split(/\r?\n/).some((line) => line.trim() === '.qda.json');
+    } catch {
+      return false;
+    }
+  });
   if (manifest) persist({ ...manifest, resources: remaining });
-  return { removed, restored, kept };
+  return { removed, restored, kept, ignoreLines };
 }
 
 // One record per file. A later apply updates it.
@@ -323,11 +333,41 @@ export function verifyMounted(root, shape, io = {}) {
   if (pkg?.type === 'module') {
     return { mounted: false, reason: 'package.json declares ES modules, and qda-gate.js cannot load there', entry: null };
   }
-  const started = /(?<![\w-])(?:node|nodemon|tsx|ts-node)\s+(?:--?[\w-]+(?:=\S+)?\s+)*([\w./-]+\.[cm]?[jt]s)\b/
-    .exec(pkg?.scripts?.start ?? '')?.[1];
-  const named = ['server', 'index', 'app'].flatMap((n) => ['js', 'mjs', 'cjs', 'ts'].map((x) => `${n}.${x}`));
+  // An Express project keeps no files in public/, which a host can serve as static files.
+  if (shape === 'node-server') {
+    const served = list('public').some((f) => {
+      const path = `public/${f}`;
+      if (!exists(path)) return false;
+      try { read(path); return true; } catch (error) { return error.code !== 'EISDIR'; }
+    });
+    if (served) {
+      return { mounted: false, reason: 'public/ holds files that can be served without the gate; serve them through the app from another folder after the gate', entry: null };
+    }
+  }
+  // Vercel runs each file under api/ as its own function, whatever its language.
+  const foreign = list('api').find((f) => /\.(?:py|go|rb)$/.test(f));
+  if (foreign) {
+    const entry = `api/${foreign}`;
+    return { mounted: false, reason: `${entry} can answer without the gate`, entry };
+  }
+  // Every word of the start script that can name a file: one with a script
+  // extension anywhere, and the first plain word after the command.
+  const start = String(pkg?.scripts?.start ?? '');
+  const runs = /(?<![\w-])(?:node|nodemon|tsx|ts-node)\s/.test(start);
+  const withExtension = runs ? start.match(/(?<![\w./-])[\w./-]+\.[cm]?[jt]s(?![\w./-])/g) ?? [] : [];
+  const plain = /(?<![\w-])(?:node|nodemon|tsx|ts-node)\s+(?:-[\w-]+(?:=\S+)?\s+)*([\w./-]+)/.exec(start)?.[1];
+  // A start script can name a file without its extension; check every file Node would load.
+  const scriptFiles = (f) => {
+    if (!f) return [];
+    const base = f.replace(/^\.\//, '');
+    if (/\.[cm]?[jt]s$/.test(base)) return [base];
+    return [...['js', 'mjs', 'cjs', 'ts', 'mts', 'cts'].map((x) => `${base}.${x}`), `${base}/index.js`];
+  };
+  const named = ['server', 'index', 'app']
+    .flatMap((n) => ['js', 'mjs', 'cjs', 'ts', 'mts', 'cts'].map((x) => `${n}.${x}`));
   const entries = [...new Set([
-    ...[pkg?.main, started].filter((f) => typeof f === 'string').map((f) => f.replace(/^\.\//, '')),
+    ...(typeof pkg?.main === 'string' ? [pkg.main.replace(/^\.\//, '')] : []),
+    ...[...withExtension, plain].flatMap(scriptFiles),
     ...named, ...named.map((f) => `src/${f}`), 'api/index.js', 'api/index.ts',
   ])];
 
@@ -362,6 +402,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
     const result = teardownGate(args[1], loadManifest(args[1]));
     console.log(`removed: ${result.removed.join(', ') || 'none'}; restored: ${result.restored.join(', ') || 'none'}`);
     if (result.kept.length) console.log(`kept, because it changed or has no backup: ${result.kept.join(', ')}`);
+    if (result.ignoreLines.length) console.log(`kept .qda.json lines in ${result.ignoreLines.join(', ')}: they stay in place`);
   } else {
     const shape = command === 'apply' ? args[1] : command;
     const root = command === 'apply' ? args[2] : args[1];
