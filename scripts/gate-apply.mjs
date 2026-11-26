@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync, readdirSync, realpathSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dirname, join, resolve, relative, isAbsolute, sep } from 'node:path';
+import { dirname, join, resolve, relative, isAbsolute, sep, posix } from 'node:path';
 import { loadManifest, saveManifest, emptyManifest, addResource, refuseLink } from './manifest.mjs';
 
 const MARKER = 'qda-gate: quick-dirty-auth';
@@ -22,7 +22,12 @@ const MAP = {
 };
 
 // The only files this skill writes, so the only files teardown can touch.
-const GATE_FILES = new Set(Object.values(MAP).flatMap((p) => [p.dest, ...(p.ensureFiles ?? []).map((f) => f.dest)]));
+const SRC_GATE = 'src/middleware.ts';
+const GATE_FILES = new Set([SRC_GATE,
+  ...Object.values(MAP).flatMap((p) => [p.dest, ...(p.ensureFiles ?? []).map((f) => f.dest)])]);
+
+// Next.js reads src/middleware.ts when the pages are in src/.
+const usesSrc = (exists) => exists('src/app') || exists('src/pages');
 
 export function planGate(shape) {
   if (shape === 'unknown') throw new Error('Cannot apply gate to unknown shape; disambiguate first.');
@@ -43,17 +48,18 @@ export function applyGate(shape, targetRoot, writer = writeFileSync, exists = ex
   const backups = []; // a user file, restored at teardown
   const copies = [];  // an older or edited gate, kept for the user
   const template = readTemplate(plan.template);
+  const dest = shape === 'next' && usesSrc((p) => exists(join(targetRoot, p))) ? SRC_GATE : plan.dest;
 
-  const destPath = join(targetRoot, plan.dest);
+  const destPath = join(targetRoot, dest);
   // Check every fixed path before the first write.
-  for (const name of [plan.dest, '.qda.json', ...(plan.ensureFiles ?? []).map((f) => f.dest)]) {
+  for (const name of [dest, '.qda.json', ...(plan.ensureFiles ?? []).map((f) => f.dest)]) {
     refuseLink(targetRoot, join(targetRoot, name));
   }
   if (exists(destPath)) {
     const previous = read(destPath);
     if (!isQdaGate(previous) && !force) {
       throw new Error(
-        `Refusing to overwrite ${plan.dest}: it is not a gate this skill wrote. ` +
+        `Refusing to overwrite ${dest}: it is not a gate this skill wrote. ` +
         'Ask the user, then re-run with --force to save a backup first.',
       );
     }
@@ -61,14 +67,14 @@ export function applyGate(shape, targetRoot, writer = writeFileSync, exists = ex
       let suffix = '';
       let n = 0;
       while (exists(`${destPath}.qda-backup${suffix}`)) suffix = `.${++n}`;
-      const backup = `${plan.dest}.qda-backup${suffix}`;
+      const backup = `${dest}.qda-backup${suffix}`;
       refuseLink(targetRoot, join(targetRoot, backup));
       writer(`${destPath}.qda-backup${suffix}`, previous);
       (isQdaGate(previous) ? copies : backups).push(backup);
     }
-    overwritten.push(plan.dest);
+    overwritten.push(dest);
   } else {
-    created.push(plan.dest);
+    created.push(dest);
   }
   writer(destPath, template);
 
@@ -80,7 +86,7 @@ export function applyGate(shape, targetRoot, writer = writeFileSync, exists = ex
       ensuredWritten.push(f.dest);
     }
   }
-  return { ...plan, created, overwritten, backups, copies, ensuredWritten };
+  return { ...plan, dest, created, overwritten, backups, copies, ensuredWritten };
 }
 
 function projectPath(root, name, action) {
@@ -145,6 +151,7 @@ export function teardownGate(root, manifest, io = {}) {
         removed.push(resource.path);
       } else {
         kept.push(resource.path);
+        remaining.push(resource);
       }
     }
   }
@@ -265,8 +272,27 @@ function checkEntry(source, shape) {
   return { mounted: true, reason: 'the gate is mounted directly after the app is created' };
 }
 
-// A file under api/ that only hands on the app adds no unguarded route.
-const RE_EXPORT = /^\s*(?:module\.exports\s*=\s*require\s*\([^)]*\)|export\s*\{\s*default\s*\}\s*from\s*['"][^'"]+['"])\s*;?\s*$/;
+// A file under api/ whose whole content hands on another file of the project:
+// module.exports = require('./x'), the two line form of it, or export { default } from './x'.
+const RE_EXPORT = new RegExp(String.raw`^\s*(?:['"]use strict['"]\s*;?\s*)?(?:`
+  + String.raw`module\.exports\s*=\s*require\s*\(\s*['"](\.[^'"]+)['"]\s*\)`
+  + String.raw`|const\s+([\w$]+)\s*=\s*require\s*\(\s*['"](\.[^'"]+)['"]\s*\)\s*;?\s*module\.exports\s*=\s*\2`
+  + String.raw`|export\s*\{\s*default\s*\}\s*from\s*['"](\.[^'"]+)['"]`
+  + String.raw`)\s*;?\s*$`);
+
+// An api/ file is guarded when it mounts the gate, or hands on a file that does.
+function guarded(file, shape, exists, read) {
+  const source = read(file);
+  const handOn = RE_EXPORT.exec(maskSource(source).code);
+  if (!handOn) return Boolean(checkEntry(source, shape)?.mounted);
+  const base = posix.join(posix.dirname(file), handOn[1] ?? handOn[3] ?? handOn[4]);
+  if (base.startsWith('..')) return false;
+  const kinds = ['js', 'mjs', 'cjs', 'ts'];
+  const named = /\.[cm]?[jt]s$/.test(base) ? [base] : [];
+  const target = [...named, ...kinds.map((k) => `${base}.${k}`), ...kinds.map((k) => `${base}/index.${k}`)]
+    .find((p) => exists(p));
+  return Boolean(target && checkEntry(read(target), shape)?.mounted);
+}
 
 const listFiles = (folder) => {
   try { return readdirSync(folder, { recursive: true }).map(String); } catch (error) {
@@ -279,8 +305,7 @@ export function verifyMounted(root, shape, io = {}) {
   const { exists = (p) => existsSync(join(root, p)),
           read = (p) => readFileSync(join(root, p), 'utf8'),
           list = (p) => listFiles(join(root, p)) } = io;
-  if (shape === 'next' && (exists('src/app') || exists('src/pages'))
-      && !(exists('src/middleware.ts') && isQdaGate(read('src/middleware.ts')))) {
+  if (shape === 'next' && usesSrc(exists) && !(exists(SRC_GATE) && isQdaGate(read(SRC_GATE)))) {
     return { mounted: false, reason: 'this project keeps its pages in src/, so the gate file must be src/middleware.ts', entry: null };
   }
   if (shape === 'next' || shape === 'static') {
@@ -301,7 +326,7 @@ export function verifyMounted(root, shape, io = {}) {
 
   // Vercel runs each file under api/ as its own function.
   const open = list('api').filter((f) => /\.[cm]?[jt]s$/.test(f) && !/\.d\.ts$/.test(f)).map((f) => `api/${f}`)
-    .find((f) => { const code = maskSource(read(f)).code; return !RE_EXPORT.test(code) && !checkEntry(read(f), shape)?.mounted; });
+    .find((f) => !guarded(f, shape, exists, read));
   if (open) return { mounted: false, reason: `${open} can answer without the gate`, entry: open };
 
   // Every candidate file that creates an app must pass, and at least one must exist.

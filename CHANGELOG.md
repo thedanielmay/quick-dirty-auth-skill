@@ -6,7 +6,7 @@
 - `.qda.json` is added to the project `.gitignore` and `.vercelignore`, without duplicate lines.
 - A user file is overwritten only with `--force`, which saves a backup. A changed or older gate is copied before it is replaced. Teardown deletes only unchanged files this skill created, restores backups, keeps other records, and refuses records for other files.
 - Fastify apps get a dependency-free gate using an `onRequest` hook, with the same headers as the Express gate.
-- Deploy stops when the server entry does not load and mount the gate before routes, when a file under `api/` can answer alone, or when a Next.js `src/` project has no `src/middleware.ts` gate.
+- Deploy stops when the server entry does not load and mount the gate before routes, when a file under `api/` can answer alone, or when a Next.js `src/` project has no `src/middleware.ts` gate. In that layout the gate is written to `src/middleware.ts`.
 - Static signals outrank a stray server file. Conflicting static and server signals report `unknown`.
 - Every gate reads `GATE_PASSWORD` when it handles a request. No health path is exempt.
 - The detect, probe, record, password and gate scripts print results from the command line. Requires Node 22.18 or newer.

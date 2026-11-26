@@ -55,9 +55,15 @@ export function loadManifest(root) {
   refuseLink(root, p);
   if (!existsSync(p)) return null;
   const raw = JSON.parse(readFileSync(p, 'utf8'));
-  const secrets = Object.entries(raw).filter(([key]) => isSecret(key));
-  const cleaned = { ...stripSecrets(raw), passwordSet: Boolean(raw.passwordSet || secrets.some(([, value]) => value)) };
-  if (secrets.length) saveManifest(root, cleaned);
+  const records = raw?.resources ?? [];
+  if (!raw || typeof raw !== 'object' || !Array.isArray(records) || !records.every((r) => r && typeof r === 'object')) {
+    throw new Error('.qda.json is damaged: it needs a list of records');
+  }
+  const stripped = stripSecrets(raw);
+  const hadValue = Object.entries(raw).some(([key, value]) => isSecret(key) && value);
+  const cleaned = { ...stripped, resources: stripped.resources ?? [], passwordSet: Boolean(raw.passwordSet || hadValue) };
+  // Rewrite the file when any secret field, at any depth, was removed.
+  if (JSON.stringify(stripped) !== JSON.stringify(raw)) saveManifest(root, cleaned);
   return cleaned;
 }
 export function saveManifest(root, manifest) {

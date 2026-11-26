@@ -95,3 +95,48 @@ test('a Next project with pages in src needs the gate in src', async () => {
   await writeFile(join(root, 'src', 'middleware.ts'), MARK);
   assert.equal(verifyMounted(root, 'next').mounted, true);
 });
+
+test('an api file that hands on an unguarded file fails the mount check', async () => {
+  const open = await project({ 'server.js': SERVER, 'open.js': "const app = require('express')();\n",
+    'api/admin.js': "module.exports = require('../open');\n" });
+  assert.equal(verifyMounted(open, 'node-server').mounted, false);
+  for (const handOn of ["'use strict';\nmodule.exports = require('../server');", "const app = require('../server');\nmodule.exports = app;",
+    "export { default } from '../server.js';"]) {
+    const root = await project({ 'server.js': SERVER, 'api/index.js': handOn });
+    assert.equal(verifyMounted(root, 'node-server').mounted, true, handOn);
+  }
+  const missing = await project({ 'server.js': SERVER, 'api/x.js': "module.exports = require('../gone');" });
+  assert.equal(verifyMounted(missing, 'node-server').mounted, false);
+});
+
+test('an empty record file works, and a damaged list stops apply before any write', async () => {
+  const empty = await project({ '.qda.json': '{}' });
+  run('apply', 'static', empty);
+  assert.match(run('teardown', empty), /^removed: middleware\.ts/);
+  for (const bad of ['{"resources":{}}', '{"resources":[null]}', 'null']) {
+    const root = await project({ '.qda.json': bad });
+    assert.throws(() => run('apply', 'static', root), undefined, bad);
+    assert.equal(existsSync(join(root, 'middleware.ts')), false, bad);
+  }
+});
+
+test('apply and teardown use src/middleware.ts in a Next src project', async () => {
+  const root = await project({ 'src/app/page.tsx': 'x' });
+  assert.match(run('apply', 'next', root), /-> src\/middleware\.ts[\s\S]*mounted: true/);
+  assert.equal(existsSync(join(root, 'middleware.ts')), false);
+  assert.match(run('teardown', root), /^removed: src\/middleware\.ts/);
+});
+
+test('teardown keeps the record of a file it keeps', async () => {
+  const root = await project();
+  run('apply', 'static', root);
+  await writeFile(join(root, 'middleware.ts'), `${await text(root, 'middleware.ts')}// mine`);
+  run('teardown', root);
+  assert.deepEqual(loadManifest(root).resources.map((r) => r.path), ['middleware.ts']);
+});
+
+test('a secret field inside a record is removed from the file on read', async () => {
+  const root = await project({ '.qda.json': '{"resources":[{"kind":"cf","apiPassword":"dummy"}]}' });
+  loadManifest(root);
+  assert.doesNotMatch(await text(root, '.qda.json'), /dummy/);
+});
