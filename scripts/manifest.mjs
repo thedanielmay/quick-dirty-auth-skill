@@ -93,12 +93,41 @@ export function ensureIgnoreEntries(root, io = {}) {
   return added;
 }
 
+// A record for an outside resource, such as a Cloudflare id. gate-apply.mjs writes the file records.
+export function recordResource(manifest, record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)
+      || typeof record.kind !== 'string' || !record.kind || record.kind === 'file'
+      || typeof record.id !== 'string' || !record.id) {
+    throw new Error('a record needs a text kind other than "file" and a text id');
+  }
+  // A re-run records the same id once.
+  const others = manifest.resources.filter((r) => !(r.kind === record.kind && r.id === record.id));
+  return addResource({ ...manifest, resources: others }, record);
+}
+// Drop a record after its resource is deleted. File records belong to gate-apply.mjs teardown.
+export function forgetResource(manifest, kind, id) {
+  if (!kind || !id) throw new Error('forget needs a kind and an id');
+  if (kind === 'file') throw new Error('gate-apply.mjs teardown removes file records');
+  return { ...manifest, resources: manifest.resources.filter((r) => !(r.kind === kind && r.id === id)) };
+}
+
 // CLI: node manifest.mjs <read|password-set|ignore> <root>
+//      node manifest.mjs record <root> '<json>'   and   node manifest.mjs forget <root> <kind> <id>
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
-  const [, , command, root] = process.argv;
+  const [, , command, root, ...rest] = process.argv;
   if (!command || !root) {
-    console.error('usage: node manifest.mjs <read|password-set|ignore> <root>');
+    console.error("usage: node manifest.mjs <read|password-set|ignore> <root> | record <root> '<json>' | forget <root> <kind> <id>");
     process.exitCode = 1;
+  } else if (command === 'record') {
+    const current = loadManifest(root) ?? emptyManifest();
+    saveManifest(root, recordResource(current, JSON.parse(rest[0] ?? 'null')));
+    const { kind, id } = JSON.parse(rest[0]);
+    console.log(`recorded: ${kind} ${id}`);
+  } else if (command === 'forget') {
+    const current = loadManifest(root) ?? emptyManifest();
+    const next = forgetResource(current, rest[0], rest[1]);
+    saveManifest(root, next);
+    console.log(`forgot ${current.resources.length - next.resources.length} record(s)`);
   } else if (command === 'read') {
     const manifest = loadManifest(root);
     console.log(manifest ? JSON.stringify(manifest) : 'no manifest');

@@ -24,7 +24,7 @@ The scripts need Node 22.18 or newer, and the deploy goes to Vercel.
 
 ## Gate status
 
-The gate stays locked until `GATE_PASSWORD` is set. Visitors see a locked page during that time.
+The password gate stays locked until `GATE_PASSWORD` is set. Visitors see a locked page during that time. When both Cloudflare Access variables are set, the gate checks the Access token instead.
 If a site was published with 1.0.3 or earlier, apply the gate again, redeploy, and remove the old deployments. An older gate file stops the new apply. Check your own edits in it, then use `--force`, which saves a backup.
 
 ## Changes

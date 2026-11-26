@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -71,10 +71,65 @@ test('manifest.mjs prints a useful result for ignore and password-set', () => {
   }
 });
 
+test('Cloudflare records stay through gate teardown until forget removes them', () => {
+  const dir = tempRoot();
+  const fails = (...args) => spawnSync(process.execPath, [join(root, 'scripts', 'manifest.mjs'), ...args], { encoding: 'utf8' }).status;
+  try {
+    writeFileSync(join(dir, 'server.js'), "const app = require('express')();\nconst gate = require('./qda-gate'); app.use(gate);\n");
+    assert.match(run('gate-apply.mjs', 'apply', 'node-server', dir), /mounted: true/);
+    // The shapes SKILL.md gives for the Cloudflare route.
+    run('manifest.mjs', 'record', dir, '{"kind":"cloudflare-access-app","id":"app1","accountId":"acc","aud":"aud1"}');
+    run('manifest.mjs', 'record', dir, '{"kind":"cloudflare-access-policy","id":"pol1","appId":"app1","accountId":"acc"}');
+    run('manifest.mjs', 'record', dir, '{"kind":"cloudflare-dns","id":"dns1","zoneId":"zone"}');
+    run('manifest.mjs', 'record', dir, '{"kind":"vercel-domain","id":"app.example.com"}');
+    assert.notEqual(fails('record', dir, '{"kind":"file","id":"x"}'), 0, 'file records belong to gate-apply');
+    assert.notEqual(fails('record', dir, '{"kind":"cloudflare-dns"}'), 0, 'a record needs an id');
+    assert.notEqual(fails('forget', dir, 'file', 'qda-gate.js'), 0);
+
+    run('gate-apply.mjs', 'teardown', dir);
+    const kinds = () => JSON.parse(run('manifest.mjs', 'read', dir)).resources.map((r) => `${r.kind}:${r.id}`);
+    assert.deepEqual(kinds(), ['cloudflare-access-app:app1', 'cloudflare-access-policy:pol1',
+      'cloudflare-dns:dns1', 'vercel-domain:app.example.com']);
+    assert.match(run('manifest.mjs', 'forget', dir, 'cloudflare-access-policy', 'pol1'), /forgot 1/);
+    assert.deepEqual(kinds(), ['cloudflare-access-app:app1', 'cloudflare-dns:dns1', 'vercel-domain:app.example.com']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('password.mjs prints a usable password', () => {
   const password = run('password.mjs');
   assert.equal(password.length, 24);
   assert.match(password, /^[A-Za-z0-9_-]+$/);
+});
+
+test('cloudflare.mjs lists every subcommand the Cloudflare route calls', () => {
+  const help = run('cloudflare.mjs', '--help');
+  for (const command of [
+    'find-zone', 'find-account', 'auth-domain', 'create-app', 'create-policy',
+    'check-cname', 'upsert-cname', 'delete-policy', 'delete-app', 'delete-dns',
+  ]) {
+    assert.match(help, new RegExp(command), command);
+  }
+});
+
+const cloudflareWithoutToken = (command) => spawnSync(process.execPath, [join(root, 'scripts', 'cloudflare.mjs'), command], {
+  encoding: 'utf8',
+  env: { ...process.env, CF_API_TOKEN: '' },
+});
+
+test('cloudflare.mjs recognises upsert-cname before checking the token', () => {
+  const result = cloudflareWithoutToken('upsert-cname');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /CF_API_TOKEN/);
+  assert.doesNotMatch(result.stdout, /usage:/);
+});
+
+test('cloudflare.mjs rejects an unknown subcommand', () => {
+  const result = cloudflareWithoutToken('not-a-command');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr + result.stdout, /usage:|unknown command/);
+  assert.doesNotMatch(result.stderr, /CF_API_TOKEN/);
 });
 
 // Fault 5: the CLI records the ensured package.json and only removes its own copy.
@@ -122,6 +177,7 @@ test('each CLI runs from a folder with a space and through a symlink', () => {
     ['password.mjs', [], /^[A-Za-z0-9_-]{24}$/],
     ['manifest.mjs', ['ignore', appRoot], /\.qda\.json/],
     ['gate-apply.mjs', ['apply', 'static', appRoot], /^applied /],
+    ['cloudflare.mjs', ['--help'], /^usage:/],
   ];
   const runThrough = (dir, link, args) =>
     execFileSync(process.execPath, [join(dir, link), ...args], { encoding: 'utf8', cwd: dir }).trim();
