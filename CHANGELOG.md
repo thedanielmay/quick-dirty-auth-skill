@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.1 - 2026-11-26
+
+- `verify` allows a `.gitkeep` in `public/` only when it is empty or holds only spaces, tabs and line breaks.
+
 ## 1.3.0 - 2026-11-26
 
 - `verify` refuses a `node-server` project with files in `public/`. `.DS_Store` and `.gitkeep` do not count. Serve those files through the app from another folder after the gate.

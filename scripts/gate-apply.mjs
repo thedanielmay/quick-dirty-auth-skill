@@ -364,10 +364,15 @@ export function verifyMounted(root, shape, io = {}) {
   // A host can serve public/ as static files, so an Express project keeps no files there.
   if (shape === 'node-server') {
     const served = list('public').some((f) => {
-      if (['.DS_Store', '.gitkeep'].includes(posix.basename(f))) return false;
+      const name = posix.basename(f);
+      if (name === '.DS_Store') return false; // the Vercel CLI does not upload it
       const path = `public/${f}`;
       if (!exists(path)) return false;
-      try { read(path); return true; } catch (error) { return error.code !== 'EISDIR'; }
+      try {
+        const text = String(read(path));
+        // Empty means no bytes other than plain spaces, tabs and line breaks.
+        return name !== '.gitkeep' || !/^[ \t\r\n]*$/.test(text);
+      } catch (error) { return error.code !== 'EISDIR'; }
     });
     if (served) {
       return { mounted: false, reason: 'public/ holds files that can be served without the gate; serve them through the app from another folder after the gate', entry: null };

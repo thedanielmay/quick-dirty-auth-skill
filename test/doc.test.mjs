@@ -65,14 +65,14 @@ test('package.json declares Node 22.18 or newer', () => {
 });
 
 // Release metadata.
-test('release metadata is 1.3.0', () => {
-  assert.equal(plugin.version, '1.3.0');
-  assert.equal(pkg.version, '1.3.0');
-  assert.match(skill, /^  version: "1\.3\.0"$/m);
+test('release metadata is 1.3.1', () => {
+  assert.equal(plugin.version, '1.3.1');
+  assert.equal(pkg.version, '1.3.1');
+  assert.match(skill, /^  version: "1\.3\.1"$/m);
 });
 
-test('the 1.3.0 changelog heading is first', () => {
-  assert.match(changelog.slice(changelog.indexOf('\n## ')), /^\n## 1\.3\.0 - 2026-11-26\n/);
+test('the 1.3.1 changelog heading is first', () => {
+  assert.match(changelog.slice(changelog.indexOf('\n## ')), /^\n## 1\.3\.1 - 2026-11-26\n/);
 });
 
 test('the 1.2.0 changelog section describes new behaviour only', () => {
