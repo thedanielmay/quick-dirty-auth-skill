@@ -2,7 +2,7 @@
 
 ## 1.3.1 - 2026-11-26
 
-- `verify` allows a `.gitkeep` in `public/` only when it is empty.
+- `verify` allows a `.gitkeep` in `public/` only when it is empty or holds only spaces, tabs and line breaks.
 
 ## 1.3.0 - 2026-11-26
 

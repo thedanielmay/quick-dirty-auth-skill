@@ -370,7 +370,8 @@ export function verifyMounted(root, shape, io = {}) {
       if (!exists(path)) return false;
       try {
         const text = String(read(path));
-        return name !== '.gitkeep' || text.trim() !== '';
+        // Empty means no bytes other than plain spaces, tabs and line breaks.
+        return name !== '.gitkeep' || !/^[ \t\r\n]*$/.test(text);
       } catch (error) { return error.code !== 'EISDIR'; }
     });
     if (served) {
